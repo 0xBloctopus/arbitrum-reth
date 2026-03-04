@@ -1,9 +1,7 @@
 # Arbitrum Reth — Nitro → Rust Port
 
 ## What This Project Is
-Port Arbitrum Nitro's entire logic to Rust, building on reth as the execution client. The existing reth fork at
-~/Documents/RustRoverProjects/reth/crates/arbitrum/ has partial implementations. This repo (arbreth) is the clean target.
-It should use the official reth as an SDK / library and not make any changes to reth itself (except zombie accounts if needed).
+Port Arbitrum Nitro's entire logic to Rust, building on reth as the execution client.
 
 ## Architecture Decisions (Already Made)
 - Target structure: `crates/` workspace with sub-crates mirroring Nitro's module structure
@@ -27,15 +25,14 @@ It should use the official reth as an SDK / library and not make any changes to 
 ## Important git practices
 - Commit with short commit messages and best practices very frequently (for every unit of logic)
 - Do not co-author or author commits with claude but use the git bash commands for git interactions
-- Do not push to remotes, just commit locally
 
 ## Key Reference Repos
-- **reth fork** (~/Documents/RustRoverProjects/reth) — has partial arbitrum crate with 68 Rust files. STUDY THIS FIRST for patterns.
-- **reth-official** (~/Documents/RustRoverProjects/reth-official) — stock reth SDK, for understanding base traits
-- **nitro** (~/Documents/GoLandProjects/nitro) - Official Arbitrum nitro implementation which should always be treated as source of truth
+- **reth fork** (tiljrd/reth) — has partial arbitrum crate with 68 Rust files. STUDY THIS FIRST for patterns.
+- **reth-official** — stock reth SDK, for understanding base traits
+- **nitro** (tiljrd/nitro) - Official Arbitrum nitro implementation which should always be treated as source of truth
 
 ## DO NOT
 - Ignore the existing Rust references — they show proven patterns
 - Write code without running cargo check
 - Modify files outside this repo
-- Use reth-fork, arb-alloy, or nitro-rs as a library for this repo
+- Use tiljrd/reth, arb-alloy, or nitro-rs as a library for this repo
