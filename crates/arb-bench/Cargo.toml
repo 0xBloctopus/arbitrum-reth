@@ -68,7 +68,7 @@ tokio = { workspace = true }
 base64 = "0.22"
 
 # Stylus WASM assembly at generate-time
-wat = "1.0"
+wat = "1.246"
 brotli = { version = "7", default-features = false, features = ["std"] }
 tiny-keccak = { workspace = true }
 
