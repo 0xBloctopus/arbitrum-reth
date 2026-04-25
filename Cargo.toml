@@ -106,7 +106,7 @@ reth-trie-sparse = { git = "https://github.com/paradigmxyz/reth.git", rev = "20c
 
 # Alloy
 alloy-primitives = { version = "1.5", default-features = false, features = ["map-foldhash"] }
-alloy-consensus = { version = "1.7", default-features = false }
+alloy-consensus = { version = "2.0", default-features = false }
 alloy-eips = { version = "1.7", default-features = false }
 alloy-evm = { version = "0.27", features = ["rpc"] }
 alloy-rpc-types-eth = { version = "1.7" }
