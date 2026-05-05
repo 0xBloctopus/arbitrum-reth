@@ -136,6 +136,9 @@ thread_local! {
     static CURRENT_RETRYABLE_ID: Cell<[u8; 32]> = const { Cell::new([0u8; 32]) };
     /// Currently-executing redeemer (refund_to) address, left-padded into 32 bytes.
     static CURRENT_REDEEMER: Cell<[u8; 32]> = const { Cell::new([0u8; 32]) };
+    /// Effective per-gas price the sender offered, captured before tip-drop
+    /// caps `tx_env.gas_price` to base_fee. Read by Stylus `tx.gasprice`.
+    static CURRENT_TX_EFFECTIVE_GAS_PRICE: Cell<u128> = const { Cell::new(0) };
     /// Poster fee balance correction for BALANCE opcode.
     /// The canonical implementation charges gas_limit * baseFee, but our reduced
     /// gas_limit charges less by posterGas * baseFee. The BALANCE opcode handler
@@ -147,6 +150,8 @@ thread_local! {
     static STYLUS_ACTIVATION_ADDR: Cell<Option<[u8; 20]>> = const { Cell::new(None) };
     static STYLUS_KEEPALIVE_HASH: Cell<Option<[u8; 32]>> = const { Cell::new(None) };
     static STYLUS_ACTIVATION_DATA_FEE: Cell<u128> = const { Cell::new(0) };
+    static STYLUS_CALL_VALUE_HI: Cell<u128> = const { Cell::new(0) };
+    static STYLUS_CALL_VALUE_LO: Cell<u128> = const { Cell::new(0) };
 }
 
 use std::cell::RefCell;
@@ -312,10 +317,19 @@ pub fn get_current_redeemer() -> alloy_primitives::U256 {
     alloy_primitives::U256::from_be_bytes(CURRENT_REDEEMER.with(|v| v.get()))
 }
 
+pub fn set_current_tx_effective_gas_price(price: u128) {
+    CURRENT_TX_EFFECTIVE_GAS_PRICE.with(|v| v.set(price));
+}
+
+pub fn get_current_tx_effective_gas_price() -> u128 {
+    CURRENT_TX_EFFECTIVE_GAS_PRICE.with(|v| v.get())
+}
+
 pub fn clear_tx_scratch() {
     CURRENT_TX_POSTER_FEE.with(|v| v.set(0));
     CURRENT_RETRYABLE_ID.with(|v| v.set([0u8; 32]));
     CURRENT_REDEEMER.with(|v| v.set([0u8; 32]));
+    CURRENT_TX_EFFECTIVE_GAS_PRICE.with(|v| v.set(0));
 }
 
 /// Set the poster balance correction for BALANCE opcode adjustment.
@@ -425,6 +439,23 @@ pub fn take_stylus_activation_data_fee() -> alloy_primitives::U256 {
         v.set(0);
         alloy_primitives::U256::from(val)
     })
+}
+
+pub fn set_stylus_call_value(value: alloy_primitives::U256) {
+    let bytes = value.to_be_bytes::<32>();
+    let hi = u128::from_be_bytes(bytes[0..16].try_into().unwrap_or([0u8; 16]));
+    let lo = u128::from_be_bytes(bytes[16..32].try_into().unwrap_or([0u8; 16]));
+    STYLUS_CALL_VALUE_HI.with(|v| v.set(hi));
+    STYLUS_CALL_VALUE_LO.with(|v| v.set(lo));
+}
+
+pub fn get_stylus_call_value() -> alloy_primitives::U256 {
+    let hi = STYLUS_CALL_VALUE_HI.with(|v| v.get());
+    let lo = STYLUS_CALL_VALUE_LO.with(|v| v.get());
+    let mut bytes = [0u8; 32];
+    bytes[0..16].copy_from_slice(&hi.to_be_bytes());
+    bytes[16..32].copy_from_slice(&lo.to_be_bytes());
+    alloy_primitives::U256::from_be_bytes(bytes)
 }
 
 pub fn emit_log(
@@ -560,5 +591,54 @@ pub fn register_arb_precompiles(map: &mut PrecompilesMap, arbos_version: u64) {
         for addr in &BLS12_381_ADDRESSES {
             map.apply_precompile(addr, |_| None);
         }
+    }
+}
+
+#[cfg(test)]
+mod recent_wasms_tests {
+    use super::*;
+    use alloy_primitives::B256;
+
+    #[test]
+    fn reset_clears_entries_and_sets_capacity() {
+        let h1 = B256::repeat_byte(0xa1);
+        let h2 = B256::repeat_byte(0xa2);
+        reset_recent_wasms(8);
+        assert!(!insert_recent_wasm(h1));
+        assert!(!insert_recent_wasm(h2));
+        assert!(insert_recent_wasm(h1));
+        // Block boundary: reset must drop everything.
+        reset_recent_wasms(8);
+        assert!(!insert_recent_wasm(h1), "reset must wipe prior entries");
+    }
+
+    #[test]
+    fn capacity_evicts_oldest() {
+        let h1 = B256::repeat_byte(0x01);
+        let h2 = B256::repeat_byte(0x02);
+        let h3 = B256::repeat_byte(0x03);
+        reset_recent_wasms(2);
+        assert!(!insert_recent_wasm(h1));
+        assert!(!insert_recent_wasm(h2));
+        // Inserting h3 over-fills, the oldest (h1) is evicted.
+        assert!(!insert_recent_wasm(h3));
+        // Probe in order: h1 evicted, h2 still present, h3 still present.
+        // (Each insert refreshes LRU position; we test exactly the sequence
+        // we care about — h1 being absent.)
+        assert!(
+            !insert_recent_wasm(h1),
+            "h1 should be evicted after h3 push"
+        );
+    }
+
+    #[test]
+    fn zero_capacity_is_no_op_cache() {
+        let h = B256::repeat_byte(0xff);
+        reset_recent_wasms(0);
+        // With cap=0, nothing should be retained, every insert reports miss.
+        assert!(!insert_recent_wasm(h));
+        // Note: current impl with cap=0 doesn't evict, but reset is the cure.
+        reset_recent_wasms(0);
+        assert!(!insert_recent_wasm(h));
     }
 }

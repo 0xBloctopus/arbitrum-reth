@@ -367,6 +367,20 @@ impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
             self.arb_ctx.l1_block_number,
         );
 
+        // Recent-WASMs LRU is per-block (matches Nitro's RecentWasms). Reset
+        // at block start so cross-block hits don't falsely flag a program
+        // as cached, which would skip the init_gas charge on first call.
+        if arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_60 {
+            let cap = arb_state
+                .programs
+                .params()
+                .map(|p| p.block_cache_size as usize)
+                .unwrap_or(0);
+            arb_precompiles::reset_recent_wasms(cap);
+        } else {
+            arb_precompiles::reset_recent_wasms(0);
+        }
+
         // Set gas backlog for Redeem precompile's ShrinkBacklog cost computation.
         if let Ok(backlog) = arb_state.l2_pricing_state.gas_backlog() {
             arb_precompiles::set_current_gas_backlog(backlog);
@@ -1703,6 +1717,17 @@ where
         // effective gas price after tip drop.
         let upfront_gas_price: u128 = revm::context_interface::Transaction::gas_price(&tx_env);
 
+        // Stash the pre-cap effective price for Stylus `tx.gasprice` before
+        // the tip-drop cap below rewrites `tx_env.gas_price` to base_fee.
+        {
+            let base_fee_u128: u128 = self.arb_ctx.basefee.try_into().unwrap_or(u128::MAX);
+            let max_priority: u128 =
+                revm::context_interface::Transaction::max_priority_fee_per_gas(&tx_env)
+                    .unwrap_or(0);
+            let effective: u128 = upfront_gas_price.min(base_fee_u128.saturating_add(max_priority));
+            arb_precompiles::set_current_tx_effective_gas_price(effective);
+        }
+
         // Effective tip per gas (per EIP-1559): min(max_priority_fee, max_fee - base_fee).
         // This is what revm mints to coinbase. Used by commit_transaction to
         // redirect coinbase tip to network when CollectTips() is true.
@@ -1831,16 +1856,22 @@ where
             tx_env.set_nonce(sender_nonce);
         }
 
-        // For payable ArbWasm calls (ActivateProgram, CodehashKeepalive),
-        // zero out value so revm doesn't transfer ETH to the precompile.
-        // We handle the data fee transfer from sender to network post-commit.
+        // ArbWasm activate/keepalive: capture the original tx_value for the
+        // precompile's value-vs-data_fee check, then zero out tx_env.value so
+        // revm doesn't transfer ETH to the precompile address. Data fee
+        // transfer happens post-commit.
         {
             let to_addr = match recovered.tx().kind() {
                 TxKind::Call(a) => Some(a),
                 _ => None,
             };
-            if to_addr == Some(arb_precompiles::ARBWASM_ADDRESS) && tx_value > U256::ZERO {
-                tx_env.set_value(U256::ZERO);
+            if to_addr == Some(arb_precompiles::ARBWASM_ADDRESS) {
+                arb_precompiles::set_stylus_call_value(tx_value);
+                if tx_value > U256::ZERO {
+                    tx_env.set_value(U256::ZERO);
+                }
+            } else {
+                arb_precompiles::set_stylus_call_value(U256::ZERO);
             }
         }
 

@@ -1,0 +1,30 @@
+{
+  "name": "arbos_v50_baseline",
+  "description": "Baseline: ArbOS v50 genesis (Dia upgrade). Covers standard tx kinds including BLS12-381 precompiles, per-tx gas limits, gas constraints, and parent gas floor. Run in record mode to populate expected.",
+  "genesis": {
+    "config": {
+      "chainId": 412346,
+      "arbitrum": {
+        "InitialArbOSVersion": 50,
+        "AllowDebugPrecompiles": true,
+        "GenesisBlockNum": 0
+      }
+    }
+  },
+  "messages": [],
+  "expected": {
+    "blocks": [
+      {
+        "number": 0,
+        "block_hash": "0x08cad158d0956351511d1e67cc48bc1ef089ec37c087d4e227b45a6fb71bac3e",
+        "state_root": "0x7df9d696ad8176680f675557ef0a0e9276d9510c040dc1a24a9296b4a9d8d694",
+        "receipts_root": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        "transactions_root": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        "gas_used": 0
+      }
+    ],
+    "eth_calls": [],
+    "storage": [],
+    "balances": []
+  }
+}

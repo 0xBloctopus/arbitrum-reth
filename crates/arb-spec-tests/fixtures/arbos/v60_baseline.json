@@ -1,0 +1,30 @@
+{
+  "name": "arbos_v60_baseline",
+  "description": "Baseline: ArbOS v60 genesis (multi-gas constraints, Stylus contract limit, transaction filtering, tip collection). Covers standard tx kinds with multi-dimensional gas tracking, native token manager, and recent-wasm cache. Run in record mode to populate expected.",
+  "genesis": {
+    "config": {
+      "chainId": 412346,
+      "arbitrum": {
+        "InitialArbOSVersion": 60,
+        "AllowDebugPrecompiles": true,
+        "GenesisBlockNum": 0
+      }
+    }
+  },
+  "messages": [],
+  "expected": {
+    "blocks": [
+      {
+        "number": 0,
+        "block_hash": "0xd0564ff804de4b490ae5c3d252c66a886c10faa42730f983dd6bbe3dfbcfd07b",
+        "state_root": "0x6f96ed9046ded46b40bd3ac903158065be54827c0624229e9c6e0ff541c0c6df",
+        "receipts_root": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        "transactions_root": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        "gas_used": 0
+      }
+    ],
+    "eth_calls": [],
+    "storage": [],
+    "balances": []
+  }
+}
