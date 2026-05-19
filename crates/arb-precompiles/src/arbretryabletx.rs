@@ -346,7 +346,7 @@ fn handle_redeem(input: &mut PrecompileInput<'_>, ticket_id: B256) -> Precompile
     }
     let gas_to_donate = gas_remaining - future_gas_costs;
 
-    let actual_backlog_cost = compute_actual_backlog_cost(input)?;
+    let actual_backlog_cost = compute_actual_backlog_cost(input, gas_to_donate)?;
 
     let max_refund = U256::MAX;
     let submission_fee_refund = U256::ZERO;
@@ -385,7 +385,10 @@ fn handle_redeem(input: &mut PrecompileInput<'_>, ticket_id: B256) -> Precompile
     ))
 }
 
-fn compute_actual_backlog_cost(input: &mut PrecompileInput<'_>) -> Result<u64, PrecompileError> {
+fn compute_actual_backlog_cost(
+    input: &mut PrecompileInput<'_>,
+    gas_to_donate: u64,
+) -> Result<u64, PrecompileError> {
     use arb_chainspec::arbos_version as arb_ver;
     let arbos_version = crate::get_arbos_version();
     if arbos_version >= arb_ver::ARBOS_VERSION_MULTI_GAS_CONSTRAINTS {
@@ -397,7 +400,20 @@ fn compute_actual_backlog_cost(input: &mut PrecompileInput<'_>) -> Result<u64, P
             return Ok(2 * SLOAD_GAS + len.saturating_mul(SLOAD_GAS + SSTORE_RESET_GAS));
         }
     }
-    Ok(SLOAD_GAS + SSTORE_GAS)
+    Ok(legacy_actual_backlog_cost(
+        crate::get_current_gas_backlog(),
+        gas_to_donate,
+    ))
+}
+
+fn legacy_actual_backlog_cost(current_backlog: u64, gas_to_donate: u64) -> u64 {
+    let new_backlog = current_backlog.saturating_sub(gas_to_donate);
+    let write_cost = if new_backlog == 0 {
+        SSTORE_RESET_GAS
+    } else {
+        SSTORE_GAS
+    };
+    SLOAD_GAS + write_cost
 }
 
 fn compute_backlog_update_cost(input: &mut PrecompileInput<'_>) -> Result<u64, PrecompileError> {
@@ -618,4 +634,50 @@ fn handle_cancel(input: &mut PrecompileInput<'_>, ticket_id: B256) -> Precompile
         gas_used.min(gas_limit),
         Vec::new().into(),
     ))
+}
+
+#[cfg(test)]
+mod redeem_gas_tests {
+    use super::*;
+
+    #[test]
+    fn drains_backlog_to_zero_uses_sstore_reset() {
+        assert_eq!(
+            legacy_actual_backlog_cost(100_000, 100_000),
+            SLOAD_GAS + SSTORE_RESET_GAS,
+        );
+        assert_eq!(legacy_actual_backlog_cost(100_000, 100_000), 5_800);
+    }
+
+    #[test]
+    fn drains_backlog_partially_uses_sstore_set() {
+        assert_eq!(
+            legacy_actual_backlog_cost(100_000, 99_000),
+            SLOAD_GAS + SSTORE_GAS,
+        );
+        assert_eq!(legacy_actual_backlog_cost(100_000, 99_000), 20_800);
+    }
+
+    #[test]
+    fn donate_exceeds_backlog_saturates_to_zero() {
+        assert_eq!(
+            legacy_actual_backlog_cost(50_000, 200_000),
+            SLOAD_GAS + SSTORE_RESET_GAS,
+        );
+    }
+
+    #[test]
+    fn empty_backlog_zero_donate_still_writes_zero() {
+        assert_eq!(
+            legacy_actual_backlog_cost(0, 0),
+            SLOAD_GAS + SSTORE_RESET_GAS,
+        );
+    }
+
+    #[test]
+    fn sepolia_block_100_435_687_diverges_by_15000_with_buggy_static_cost() {
+        let buggy_static_cost = SLOAD_GAS + SSTORE_GAS;
+        let fixed_drain_cost = legacy_actual_backlog_cost(100_000, 100_000);
+        assert_eq!(buggy_static_cost - fixed_drain_cost, 15_000);
+    }
 }

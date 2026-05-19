@@ -1,0 +1,30 @@
+{
+  "name": "arbos_v10_baseline",
+  "description": "Baseline: ArbOS v10 genesis. Covers standard tx kinds (transfer, deploy, L1 fees). Run in record mode to populate expected.",
+  "genesis": {
+    "config": {
+      "chainId": 412346,
+      "arbitrum": {
+        "InitialArbOSVersion": 10,
+        "AllowDebugPrecompiles": true,
+        "GenesisBlockNum": 0
+      }
+    }
+  },
+  "messages": [],
+  "expected": {
+    "blocks": [
+      {
+        "number": 0,
+        "block_hash": "0x2116ae1892bcc05016222bd57af91945f425eeca1f7c6bacfcf0d67d4ed00f88",
+        "state_root": "0x5c0b434552d04dcd5c723669d1b332f1837dee591bb24a3aac637e3a2aca7185",
+        "receipts_root": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        "transactions_root": "0x56e81f171bcc55a6ff8345e692c0f86e5b48e01b996cadc001622fb5e363b421",
+        "gas_used": 0
+      }
+    ],
+    "eth_calls": [],
+    "storage": [],
+    "balances": []
+  }
+}
