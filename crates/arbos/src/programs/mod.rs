@@ -329,7 +329,9 @@ impl<D: Database> Programs<'_, D> {
 
         let estimate_kb = div_ceil(info.asm_estimate as u64, 1024) as u32;
 
-        let data_fee = self.data_pricer.update_model(backend, info.asm_estimate, time)?;
+        let data_fee = self
+            .data_pricer
+            .update_model(backend, info.asm_estimate, time)?;
 
         let program = Program {
             version: stylus_version,
@@ -392,7 +394,9 @@ impl<D: Database> Programs<'_, D> {
             return Err(ProgramsError::NeedsUpgrade);
         }
 
-        let data_fee = self.data_pricer.update_model(backend, program.asm_size(), time)?;
+        let data_fee = self
+            .data_pricer
+            .update_model(backend, program.asm_size(), time)?;
 
         program.activated_at = hours_since_arbitrum(time);
         self.set_program(backend, code_hash, program)?;
@@ -425,7 +429,13 @@ impl<D: Database> Programs<'_, D> {
         call_fn: F,
     ) -> Result<(Vec<u8>, u64), ProgramsError>
     where
-        F: FnOnce(Program, ProgParams, EvmData, &[u8], u64) -> Result<(Vec<u8>, u64), ProgramsError>,
+        F: FnOnce(
+            Program,
+            ProgParams,
+            EvmData,
+            &[u8],
+            u64,
+        ) -> Result<(Vec<u8>, u64), ProgramsError>,
     {
         let (call_cost, program, _model) =
             self.call_gas_cost(backend, code_hash, time, pages_open, recent_cache_hit)?;
