@@ -1,10 +1,6 @@
 use alloy_primitives::{keccak256, B256, U256};
 
-/// ArbOS state storage address (NOT the ArbOS sender address 0xa4b05).
-pub const ARBOS_STATE_ADDRESS: alloy_primitives::Address = alloy_primitives::Address::new([
-    0xa4, 0xb0, 0x5f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-    0xff, 0xff, 0xff, 0xff,
-]);
+pub use arb_storage::{ARBOS_STATE_ADDRESS, FILTERED_TX_STATE_ADDRESS};
 
 /// Subspace keys for ArbOS partitioned storage (matching arbos_state constants).
 pub const L1_PRICING_SUBSPACE: &[u8] = &[0];
@@ -28,12 +24,6 @@ pub const CACHE_MANAGERS_KEY: &[u8] = &[4];
 /// Cache managers subspace within ArbOS (PROGRAMS → CACHE_MANAGERS).
 /// Not a direct root subspace; derive at runtime via `programs_cache_managers_key()`.
 pub const CACHE_MANAGERS_SUBSPACE: &[u8] = CACHE_MANAGERS_KEY;
-
-/// Filtered transactions backing storage account (separate from ArbOS state).
-pub const FILTERED_TX_STATE_ADDRESS: alloy_primitives::Address = alloy_primitives::Address::new([
-    0xa4, 0xb0, 0x50, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x01,
-]);
 
 /// Root-level ArbOS state field offsets.
 pub const VERSION_OFFSET: u64 = 0;
