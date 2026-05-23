@@ -406,7 +406,6 @@ impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
             caller_stack: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
             evm_depth: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         });
-        arb_context::install_active(new_ctx.clone());
         self.precompile_ctx = new_ctx;
 
         if arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_60 {
@@ -415,9 +414,9 @@ impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
                 .params(state)
                 .map(|p| p.block_cache_size as usize)
                 .unwrap_or(0);
-            arb_precompiles::reset_recent_wasms(cap);
+            self.precompile_ctx.block.reset_recent_wasms(cap);
         } else {
-            arb_precompiles::reset_recent_wasms(0);
+            self.precompile_ctx.block.reset_recent_wasms(0);
         }
 
         if let Ok(backlog) = arb_state.l2_pricing_state.gas_backlog(state) {
@@ -1080,7 +1079,8 @@ where
         }
 
         // Reset per-tx processor state.
-        crate::evm::reset_stylus_pages();
+        crate::evm::reset_stylus_pages(&self.precompile_ctx);
+        crate::evm::clear_poster_balance_correction();
         self.precompile_ctx.reset_tx();
         self.precompile_ctx.reset_caller_stack();
         self.state_overlay.reset_tx();
@@ -1709,8 +1709,14 @@ where
                 .arb_ctx
                 .basefee
                 .saturating_mul(U256::from(poster_gas.saturating_add(compute_hold_gas)));
+            let correction_u128 = correction.try_into().unwrap_or(u128::MAX);
             self.precompile_ctx
-                .set_poster_balance_correction(correction.try_into().unwrap_or(u128::MAX));
+                .set_poster_balance_correction(correction_u128);
+            // Publish the same value to the per-thread slot consulted by
+            // `arb_balance` / `arb_selfbalance` opcode overrides — opcodes are
+            // invoked through revm's `fn`-pointer table and cannot accept
+            // ctx as an extra argument.
+            crate::evm::set_poster_balance_correction(correction_u128);
             self.precompile_ctx.set_sender(sender);
         }
 
@@ -1999,12 +2005,13 @@ where
                 _ => None,
             };
             if to_addr == Some(arb_precompiles::ARBWASM_ADDRESS) {
-                arb_precompiles::set_stylus_call_value(tx_value);
+                self.precompile_ctx.set_stylus_call_value(tx_value);
                 if tx_value > U256::ZERO {
                     tx_env.set_value(U256::ZERO);
                 }
             } else {
-                arb_precompiles::set_stylus_call_value(U256::ZERO);
+                self.precompile_ctx
+                    .set_stylus_call_value(U256::ZERO);
             }
         }
 
@@ -2142,10 +2149,10 @@ where
         // We zero out tx_env.value before EVM execution (below) so revm
         // doesn't transfer value to the precompile. The data_fee transfer
         // from sender to network happens via the cache after commit.
-        let stylus_data_fee = if arb_precompiles::take_stylus_activation_request().is_some()
-            || arb_precompiles::take_stylus_keepalive_request().is_some()
+        let stylus_data_fee = if self.precompile_ctx.take_stylus_activation_addr().is_some()
+            || self.precompile_ctx.take_stylus_keepalive_hash().is_some()
         {
-            arb_precompiles::take_stylus_activation_data_fee()
+            self.precompile_ctx.take_stylus_activation_data_fee()
         } else {
             U256::ZERO
         };
