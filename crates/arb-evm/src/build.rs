@@ -2648,8 +2648,7 @@ where
                                     .unwrap_or([U256::ZERO; NUM_RESOURCE_KIND])
                             });
                             // SAFETY: see `Storage::state_mut()` invariant.
-                            let state_ref =
-                                unsafe { arb_state_post.backing_storage.state_mut() };
+                            let state_ref = unsafe { arb_state_post.backing_storage.state_mut() };
                             if let Ok(multi_cost) = arb_state_post
                                 .l2_pricing_state
                                 .multi_dimensional_price_for_refund_with_fees(
@@ -2692,8 +2691,7 @@ where
                         let mut new_backlog: Option<u64> = None;
                         if gas_price_positive_active {
                             // SAFETY: see `Storage::state_mut()` invariant.
-                            let state_ref =
-                                unsafe { arb_state_post.backing_storage.state_mut() };
+                            let state_ref = unsafe { arb_state_post.backing_storage.state_mut() };
                             let _ = arb_state_post.l2_pricing_state.grow_backlog(
                                 state_ref,
                                 dist.compute_gas_for_backlog,
@@ -2704,8 +2702,7 @@ where
                         }
                         if !dist.l1_fees_to_add.is_zero() {
                             // SAFETY: see `Storage::state_mut()` invariant.
-                            let state_ref =
-                                unsafe { arb_state_post.backing_storage.state_mut() };
+                            let state_ref = unsafe { arb_state_post.backing_storage.state_mut() };
                             let _ = arb_state_post
                                 .l1_pricing_state
                                 .add_to_l1_fees_available(state_ref, dist.l1_fees_to_add);
