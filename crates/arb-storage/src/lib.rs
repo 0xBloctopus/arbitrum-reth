@@ -32,8 +32,8 @@ pub use extra_types::{
 pub use queue::{initialize_queue, open_queue, Queue};
 pub use slot::storage_key_map;
 pub use state_ops::{
-    get_account_balance, read_storage_at, set_account_code, set_account_nonce,
-    write_arbos_storage, write_storage_at, ARBOS_STATE_ADDRESS, FILTERED_TX_STATE_ADDRESS,
+    get_account_balance, read_storage_at, set_account_code, set_account_nonce, write_arbos_storage,
+    write_storage_at, ARBOS_STATE_ADDRESS, FILTERED_TX_STATE_ADDRESS,
 };
 pub use storage::{Detached, Storage};
 pub use vector::{open_sub_storage_vector, SubStorageVector};

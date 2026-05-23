@@ -18,4 +18,3 @@ pub enum ArbError {
     #[error(transparent)]
     Other(Box<dyn core::error::Error + Send + Sync>),
 }
-
