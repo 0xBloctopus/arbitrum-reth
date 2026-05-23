@@ -313,7 +313,8 @@ impl<D: Database> Programs<'_, D> {
         let params = self.params(backend)?;
         let stylus_version = params.version;
 
-        let (current_version, expired, cached) = self.program_exists(backend, code_hash, time, &params)?;
+        let (current_version, expired, cached) =
+            self.program_exists(backend, code_hash, time, &params)?;
 
         if current_version == stylus_version && !expired {
             return Err(ProgramsError::UpToDate);
