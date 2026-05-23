@@ -204,10 +204,7 @@ fn handle_is_top_level_call(
     ))
 }
 
-fn handle_was_aliased(
-    input: &mut PrecompileInput<'_>,
-    ctx: &ArbPrecompileCtx,
-) -> PrecompileResult {
+fn handle_was_aliased(input: &mut PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResult {
     let internals = input.internals_mut();
     internals
         .load_account(ARBOS_STATE_ADDRESS)

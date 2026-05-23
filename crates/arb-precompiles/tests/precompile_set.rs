@@ -29,9 +29,9 @@ const P256VERIFY: Address = address!("0000000000000000000000000000000000000100")
 fn build(spec: SpecId, arbos_version: u64) -> PrecompilesMap {
     let mut map = PrecompilesMap::from(EthPrecompiles::new(spec));
     let block = arb_context::BlockCtx::new(arbos_version, 0, 0, 0, false);
-    let ctx = std::sync::Arc::new(arb_context::ArbPrecompileCtx::with_block(std::sync::Arc::new(
-        block,
-    )));
+    let ctx = std::sync::Arc::new(arb_context::ArbPrecompileCtx::with_block(
+        std::sync::Arc::new(block),
+    ));
     register_arb_precompiles(&mut map, ctx);
     map
 }

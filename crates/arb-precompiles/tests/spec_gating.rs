@@ -30,9 +30,9 @@ fn build_map(spec: SpecId, arbos_version: u64) -> PrecompilesMap {
         spec,
     });
     let block = arb_context::BlockCtx::new(arbos_version, 0, 0, 0, false);
-    let ctx = std::sync::Arc::new(arb_context::ArbPrecompileCtx::with_block(std::sync::Arc::new(
-        block,
-    )));
+    let ctx = std::sync::Arc::new(arb_context::ArbPrecompileCtx::with_block(
+        std::sync::Arc::new(block),
+    ));
     register_arb_precompiles(&mut precompiles, ctx);
     precompiles
 }

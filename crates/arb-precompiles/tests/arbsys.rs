@@ -7,7 +7,9 @@ use common::{calldata, decode_address, decode_u256, word_address, word_u256, Pre
 const ARBOS_V11: u64 = 11;
 const ARBOS_V30: u64 = 30;
 
-fn arbsys(ctx: std::sync::Arc<arb_context::ArbPrecompileCtx>) -> alloy_evm::precompiles::DynPrecompile {
+fn arbsys(
+    ctx: std::sync::Arc<arb_context::ArbPrecompileCtx>,
+) -> alloy_evm::precompiles::DynPrecompile {
     create_arbsys_precompile(ctx)
 }
 

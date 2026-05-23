@@ -1249,8 +1249,7 @@ where
     let journal_ptr = &mut context.journaled_state as *mut revm::Journal<DB>;
     let is_static = inputs.is_static || matches!(inputs.scheme, CallScheme::StaticCall);
     let ctx_ptr = context as *mut _ as *mut ();
-    let precompile_ctx_ptr =
-        std::sync::Arc::as_ptr(ctx) as *const arb_context::ArbPrecompileCtx as *const ();
+    let precompile_ctx_ptr = std::sync::Arc::as_ptr(ctx) as *const ();
     let caller = inputs.caller;
     let call_value = inputs.value.get();
     let evm_api = unsafe {
@@ -1512,10 +1511,7 @@ pub struct ArbPrecompilesMap {
 }
 
 impl ArbPrecompilesMap {
-    pub fn new(
-        inner: PrecompilesMap,
-        ctx: std::sync::Arc<arb_context::ArbPrecompileCtx>,
-    ) -> Self {
+    pub fn new(inner: PrecompilesMap, ctx: std::sync::Arc<arb_context::ArbPrecompileCtx>) -> Self {
         Self { inner, ctx }
     }
 }
@@ -2011,7 +2007,8 @@ fn build_arb_evm<DB: Database, I>(
     staged: Option<std::sync::Arc<arb_context::ArbPrecompileCtx>>,
     inspect: bool,
 ) -> ArbEvm<DB, I> {
-    let pre_ctx = staged.unwrap_or_else(|| std::sync::Arc::new(arb_context::ArbPrecompileCtx::default()));
+    let pre_ctx =
+        staged.unwrap_or_else(|| std::sync::Arc::new(arb_context::ArbPrecompileCtx::default()));
     let RevmEvm {
         ctx: evm_ctx,
         inspector,

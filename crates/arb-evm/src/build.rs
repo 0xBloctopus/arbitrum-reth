@@ -2010,8 +2010,7 @@ where
                     tx_env.set_value(U256::ZERO);
                 }
             } else {
-                self.precompile_ctx
-                    .set_stylus_call_value(U256::ZERO);
+                self.precompile_ctx.set_stylus_call_value(U256::ZERO);
             }
         }
 

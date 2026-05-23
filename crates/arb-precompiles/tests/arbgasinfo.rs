@@ -128,10 +128,8 @@ fn get_gas_backlog_tolerance_returns_l2_field() {
 #[test]
 fn get_l1_basefee_estimate_inertia_returns_l1_field() {
     let val = U256::from(10_u64);
-    let run = put_l1(fixture(30), L1_INERTIA, val).call(
-        arbgasinfo,
-        &calldata("getL1BaseFeeEstimateInertia()", &[]),
-    );
+    let run = put_l1(fixture(30), L1_INERTIA, val)
+        .call(arbgasinfo, &calldata("getL1BaseFeeEstimateInertia()", &[]));
     assert_eq!(decode_u256(run.output()), val);
 }
 
@@ -220,10 +218,8 @@ fn get_l1_pricing_equilibration_units_returns_field_at_v20() {
 #[test]
 fn get_last_l1_pricing_update_time_at_v20() {
     let val = U256::from(1_700_000_000_u64);
-    let run = put_l1(fixture(20), L1_LAST_UPDATE_TIME, val).call(
-        arbgasinfo,
-        &calldata("getLastL1PricingUpdateTime()", &[]),
-    );
+    let run = put_l1(fixture(20), L1_LAST_UPDATE_TIME, val)
+        .call(arbgasinfo, &calldata("getLastL1PricingUpdateTime()", &[]));
     assert_eq!(decode_u256(run.output()), val);
 }
 
@@ -240,10 +236,8 @@ fn get_l1_pricing_funds_due_for_rewards_at_v20() {
 #[test]
 fn get_l1_pricing_units_since_update_at_v20() {
     let val = U256::from(456_u64);
-    let run = put_l1(fixture(20), L1_UNITS_SINCE, val).call(
-        arbgasinfo,
-        &calldata("getL1PricingUnitsSinceUpdate()", &[]),
-    );
+    let run = put_l1(fixture(20), L1_UNITS_SINCE, val)
+        .call(arbgasinfo, &calldata("getL1PricingUnitsSinceUpdate()", &[]));
     assert_eq!(decode_u256(run.output()), val);
 }
 
@@ -589,10 +583,7 @@ fn get_l1_gas_price_estimate_charges_two_sloads_and_one_copy_word() {
 #[test]
 fn get_l1_basefee_estimate_inertia_charges_field_read() {
     let test = put_l1(fixture(30), L1_INERTIA, U256::from(10u64));
-    let run = test.call(
-        arbgasinfo,
-        &calldata("getL1BaseFeeEstimateInertia()", &[]),
-    );
+    let run = test.call(arbgasinfo, &calldata("getL1BaseFeeEstimateInertia()", &[]));
     assert_eq!(run.gas_used(), L1_FIELD_READ_GAS);
 }
 
@@ -677,10 +668,7 @@ fn get_last_l1_pricing_update_time_charges_field_read_at_v20() {
         L1_LAST_UPDATE_TIME,
         U256::from(1_700_000_000u64),
     );
-    let run = test.call(
-        arbgasinfo,
-        &calldata("getLastL1PricingUpdateTime()", &[]),
-    );
+    let run = test.call(arbgasinfo, &calldata("getLastL1PricingUpdateTime()", &[]));
     assert_eq!(run.gas_used(), L1_FIELD_READ_GAS);
 }
 
@@ -697,10 +685,7 @@ fn get_l1_pricing_funds_due_for_rewards_charges_field_read_at_v20() {
 #[test]
 fn get_l1_pricing_units_since_update_charges_field_read_at_v20() {
     let test = put_l1(fixture(20), L1_UNITS_SINCE, U256::from(456u64));
-    let run = test.call(
-        arbgasinfo,
-        &calldata("getL1PricingUnitsSinceUpdate()", &[]),
-    );
+    let run = test.call(arbgasinfo, &calldata("getL1PricingUnitsSinceUpdate()", &[]));
     assert_eq!(run.gas_used(), L1_FIELD_READ_GAS);
 }
 
@@ -733,11 +718,7 @@ fn get_max_tx_gas_limit_charges_field_read_at_v50() {
 fn get_current_tx_l1_gas_fees_charges_one_sload_and_one_copy_word() {
     let ctx = make_ctx();
     ctx.set_poster_fee(1_234_567);
-    let run = fixture(30).call_with(
-        arbgasinfo,
-        &calldata("getCurrentTxL1GasFees()", &[]),
-        ctx,
-    );
+    let run = fixture(30).call_with(arbgasinfo, &calldata("getCurrentTxL1GasFees()", &[]), ctx);
     assert_eq!(run.gas_used(), SLOAD_GAS + COPY_GAS);
 }
 

@@ -201,10 +201,7 @@ fn nitro_parity_fail_to_set_invalid_constraints() {
     assert!(out.reverted, "zero target should revert");
 
     // Zero adjustment window.
-    let run = owner_fixture(50).call(
-        arbowner,
-        &set_gas_pricing_calldata(&[[10_000_000, 0, 0]]),
-    );
+    let run = owner_fixture(50).call(arbowner, &set_gas_pricing_calldata(&[[10_000_000, 0, 0]]));
     let out = run.result.as_ref().expect("should return Ok(reverted)");
     assert!(out.reverted, "zero adjustment window should revert");
 }
@@ -331,8 +328,7 @@ fn nitro_parity_multi_gas_pricing_constraints_order() {
         20_000_000u64,
         800_000u64,
     )];
-    let set_run =
-        owner_fixture(60).call(arbowner, &set_multi_gas_pricing_calldata(&constraints));
+    let set_run = owner_fixture(60).call(arbowner, &set_multi_gas_pricing_calldata(&constraints));
     let _ = set_run.assert_ok();
 
     let getter = set_run.continue_into(owner_fixture(60), ARBOS_STATE_ADDRESS);
@@ -372,8 +368,7 @@ fn nitro_parity_multi_gas_constraints_storage_round_trip() {
             1_600_000u64,
         ),
     ];
-    let set_run =
-        owner_fixture(60).call(arbowner, &set_multi_gas_pricing_calldata(&constraints));
+    let set_run = owner_fixture(60).call(arbowner, &set_multi_gas_pricing_calldata(&constraints));
     let out = set_run
         .result
         .as_ref()

@@ -69,11 +69,7 @@ fn get_current_redeemer_returns_value_set_by_executor() {
     let run = PrecompileTest::new()
         .arbos_version(ARBOS_V30)
         .arbos_state()
-        .call_with(
-            arbretryabletx,
-            &calldata("getCurrentRedeemer()", &[]),
-            ctx,
-        );
+        .call_with(arbretryabletx, &calldata("getCurrentRedeemer()", &[]), ctx);
     assert_eq!(decode_address(run.output()), refund_to);
 }
 
@@ -196,10 +192,7 @@ fn cancel_unknown_ticket_reverts() {
     let run = PrecompileTest::new()
         .arbos_version(ARBOS_V30)
         .arbos_state()
-        .call(
-            arbretryabletx,
-            &calldata("cancel(bytes32)", &[ticket_id]),
-        );
+        .call(arbretryabletx, &calldata("cancel(bytes32)", &[ticket_id]));
     let out = run.assert_ok();
     assert!(out.reverted);
 }
@@ -226,10 +219,7 @@ fn cancel_rejects_non_beneficiary_caller() {
             map_slot(ticket_key.as_slice(), 4),
             U256::from_be_slice(beneficiary.as_slice()),
         )
-        .call(
-            arbretryabletx,
-            &calldata("cancel(bytes32)", &[ticket_id]),
-        );
+        .call(arbretryabletx, &calldata("cancel(bytes32)", &[ticket_id]));
     assert!(run.assert_ok().reverted);
 }
 
@@ -255,10 +245,7 @@ fn redeem_unknown_ticket_reverts_with_no_ticket() {
     let run = PrecompileTest::new()
         .arbos_version(ARBOS_V30)
         .arbos_state()
-        .call(
-            arbretryabletx,
-            &calldata("redeem(bytes32)", &[ticket_id]),
-        );
+        .call(arbretryabletx, &calldata("redeem(bytes32)", &[ticket_id]));
     let out = run.assert_ok();
     assert!(out.reverted);
     let no_ticket = alloy_primitives::keccak256(b"NoTicketWithID()");
@@ -314,10 +301,7 @@ fn cancel_emits_canceled_event_and_clears_storage() {
             map_slot(ticket_key.as_slice(), 4),
             U256::from_be_slice(beneficiary.as_slice()),
         )
-        .call(
-            arbretryabletx,
-            &calldata("cancel(bytes32)", &[ticket_id]),
-        );
+        .call(arbretryabletx, &calldata("cancel(bytes32)", &[ticket_id]));
     let _ = run.assert_ok();
     // After cancel, the timeout must be cleared.
     assert_eq!(
@@ -498,10 +482,7 @@ fn cancel_unknown_ticket_charges_init_plus_open_sload_plus_revert_payload() {
     let run = PrecompileTest::new()
         .arbos_version(ARBOS_V30)
         .arbos_state()
-        .call(
-            arbretryabletx,
-            &calldata("cancel(bytes32)", &[ticket_id]),
-        );
+        .call(arbretryabletx, &calldata("cancel(bytes32)", &[ticket_id]));
     let out = run.assert_ok();
     assert!(out.reverted);
     assert_eq!(out.gas_used, 2 * SLOAD_GAS + 2 * COPY_GAS);
@@ -529,10 +510,7 @@ fn cancel_non_beneficiary_caller_reverts_with_accumulated_gas() {
             map_slot(ticket_key.as_slice(), 4),
             U256::from_be_slice(beneficiary.as_slice()),
         )
-        .call(
-            arbretryabletx,
-            &calldata("cancel(bytes32)", &[ticket_id]),
-        );
+        .call(arbretryabletx, &calldata("cancel(bytes32)", &[ticket_id]));
     let out = run.assert_ok();
     assert!(out.reverted);
     // init(803) + open_retryable sload(800) + beneficiary sload(800) = 2403.
@@ -560,10 +538,7 @@ fn cancel_with_empty_calldata_charges_full_formula() {
             map_slot(ticket_key.as_slice(), 4),
             U256::from_be_slice(beneficiary.as_slice()),
         )
-        .call(
-            arbretryabletx,
-            &calldata("cancel(bytes32)", &[ticket_id]),
-        );
+        .call(arbretryabletx, &calldata("cancel(bytes32)", &[ticket_id]));
     // 6 SLOAD + 7 SSTORE_ZERO + LOG2(375+750) + COPY = 4800 + 35000 + 1125 + 3 = 40_928.
     let event_cost = LOG_GAS + 2 * LOG_TOPIC_GAS;
     assert_eq!(
@@ -630,10 +605,7 @@ fn redeem_unknown_ticket_charges_two_open_sloads_plus_revert_payload() {
     let run = PrecompileTest::new()
         .arbos_version(ARBOS_V30)
         .arbos_state()
-        .call(
-            arbretryabletx,
-            &calldata("redeem(bytes32)", &[ticket_id]),
-        );
+        .call(arbretryabletx, &calldata("redeem(bytes32)", &[ticket_id]));
     let out = run.assert_ok();
     assert!(out.reverted);
     // init(803) + handler timeout sload(800) + open_retryable timeout sload(800)

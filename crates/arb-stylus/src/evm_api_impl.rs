@@ -187,16 +187,8 @@ pub type DoCallFn = fn(
 ) -> SubCallResult;
 
 /// Type-erased function pointer for executing CREATE/CREATE2 from Stylus.
-pub type DoCreateFn = fn(
-    *mut (),
-    *const (),
-    Address,
-    &[u8],
-    u64,
-    U256,
-    Option<B256>,
-    (u16, u16),
-) -> SubCreateResult;
+pub type DoCreateFn =
+    fn(*mut (), *const (), Address, &[u8], u64, U256, Option<B256>, (u16, u16)) -> SubCreateResult;
 
 /// Per-call storage cache entry.
 struct StorageCacheEntry {

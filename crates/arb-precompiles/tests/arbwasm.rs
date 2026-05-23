@@ -299,10 +299,8 @@ fn program_data_slot(codehash: B256) -> U256 {
 #[test]
 fn codehash_version_reverts_program_not_activated_for_unset_program() {
     let codehash = B256::from_slice(&[0x42u8; 32]);
-    let run = test_with(default_params(), ARBOS_V32).call(
-        arbwasm,
-        &calldata("codehashVersion(bytes32)", &[codehash]),
-    );
+    let run = test_with(default_params(), ARBOS_V32)
+        .call(arbwasm, &calldata("codehashVersion(bytes32)", &[codehash]));
     let out = run.assert_ok();
     assert!(out.reverted);
     let sel = alloy_primitives::keccak256(b"ProgramNotActivated()");
@@ -320,10 +318,7 @@ fn codehash_version_reverts_program_needs_upgrade_for_stale_version() {
     let test = test_with(default_params(), ARBOS_V32)
         .block_timestamp(now)
         .storage(ARBOS_STATE_ADDRESS, program_data_slot(codehash), prog_word);
-    let run = test.call(
-        arbwasm,
-        &calldata("codehashVersion(bytes32)", &[codehash]),
-    );
+    let run = test.call(arbwasm, &calldata("codehashVersion(bytes32)", &[codehash]));
     let out = run.assert_ok();
     assert!(out.reverted, "must revert");
     let sel = alloy_primitives::keccak256(b"ProgramNeedsUpgrade(uint16,uint16)");
@@ -346,10 +341,7 @@ fn codehash_version_reverts_program_expired_after_expiry() {
     let test = test_with(default_params(), ARBOS_V32)
         .block_timestamp(now)
         .storage(ARBOS_STATE_ADDRESS, program_data_slot(codehash), prog_word);
-    let run = test.call(
-        arbwasm,
-        &calldata("codehashVersion(bytes32)", &[codehash]),
-    );
+    let run = test.call(arbwasm, &calldata("codehashVersion(bytes32)", &[codehash]));
     let out = run.assert_ok();
     assert!(out.reverted);
     let sel = alloy_primitives::keccak256(b"ProgramExpired(uint64)");
@@ -368,10 +360,7 @@ fn codehash_version_returns_active_version_for_fresh_program() {
     let test = test_with(default_params(), ARBOS_V32)
         .block_timestamp(now)
         .storage(ARBOS_STATE_ADDRESS, program_data_slot(codehash), prog_word);
-    let run = test.call(
-        arbwasm,
-        &calldata("codehashVersion(bytes32)", &[codehash]),
-    );
+    let run = test.call(arbwasm, &calldata("codehashVersion(bytes32)", &[codehash]));
     assert_eq!(
         decode_u256(run.output()),
         U256::from(default_params().version)
@@ -492,10 +481,7 @@ fn codehash_asm_size_returns_kb_times_1024() {
     let test = test_with(default_params(), ARBOS_V32)
         .block_timestamp(now)
         .storage(ARBOS_STATE_ADDRESS, program_data_slot(codehash), prog_word);
-    let run = test.call(
-        arbwasm,
-        &calldata("codehashAsmSize(bytes32)", &[codehash]),
-    );
+    let run = test.call(arbwasm, &calldata("codehashAsmSize(bytes32)", &[codehash]));
     assert_eq!(decode_u256(run.output()), U256::from(7u64 * 1024));
 }
 
@@ -532,10 +518,8 @@ fn codehash_asm_size_revert_charges_canonical_gas() {
     // Pin against the canonical receipt for tx 0x08b6a928 at Sepolia block
     // 109,336,195: revert must cost SLOAD + WARM + SLOAD + 2*COPY = 1706.
     let codehash = B256::from_slice(&[0xeeu8; 32]);
-    let run = test_with(default_params(), ARBOS_V32).call(
-        arbwasm,
-        &calldata("codehashAsmSize(bytes32)", &[codehash]),
-    );
+    let run = test_with(default_params(), ARBOS_V32)
+        .call(arbwasm, &calldata("codehashAsmSize(bytes32)", &[codehash]));
     let out = run.assert_ok();
     assert!(out.reverted);
     let sel = alloy_primitives::keccak256(b"ProgramNotActivated()");
@@ -684,7 +668,6 @@ fn keepalive_inner_call_with_value_passes() {
 
 #[test]
 fn keepalive_inner_call_with_zero_value_still_reverts() {
-
     let codehash = B256::from_slice(&[0xdfu8; 32]);
     let now = 1_700_000_000_u64;
     let test = keepalive_test_setup(codehash, now).value(U256::ZERO);

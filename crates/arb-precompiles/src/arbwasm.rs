@@ -163,7 +163,8 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Calls::codehashVersion(c) => {
             const LOOKUP_GAS: u64 = SLOAD_GAS + WARM_SLOAD_GAS + SLOAD_GAS + COPY_GAS;
             const METHOD_GAS: u64 = LOOKUP_GAS + COPY_GAS;
-            let (params, program) = load_params_and_program(&mut input, ctx, &mut gas_used, c.codehash)?;
+            let (params, program) =
+                load_params_and_program(&mut input, ctx, &mut gas_used, c.codehash)?;
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -178,7 +179,8 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Calls::codehashAsmSize(c) => {
             const LOOKUP_GAS: u64 = SLOAD_GAS + WARM_SLOAD_GAS + SLOAD_GAS + COPY_GAS;
             const METHOD_GAS: u64 = LOOKUP_GAS + COPY_GAS;
-            let (params, program) = load_params_and_program(&mut input, ctx, &mut gas_used, c.codehash)?;
+            let (params, program) =
+                load_params_and_program(&mut input, ctx, &mut gas_used, c.codehash)?;
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -193,7 +195,8 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Calls::programVersion(c) => {
             const METHOD_GAS: u64 = PROGRAM_LOOKUP_GAS + COPY_GAS;
             let codehash = get_account_codehash(&mut input, c.program)?;
-            let (params, program) = load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
+            let (params, program) =
+                load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -208,7 +211,8 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Calls::programInitGas(c) => {
             const METHOD_GAS: u64 = PROGRAM_LOOKUP_GAS + 2 * COPY_GAS;
             let codehash = get_account_codehash(&mut input, c.program)?;
-            let (params, program) = load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
+            let (params, program) =
+                load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -230,7 +234,8 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Calls::programMemoryFootprint(c) => {
             const METHOD_GAS: u64 = PROGRAM_LOOKUP_GAS + COPY_GAS;
             let codehash = get_account_codehash(&mut input, c.program)?;
-            let (params, program) = load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
+            let (params, program) =
+                load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,
@@ -245,7 +250,8 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Calls::programTimeLeft(c) => {
             const METHOD_GAS: u64 = PROGRAM_LOOKUP_GAS + COPY_GAS;
             let codehash = get_account_codehash(&mut input, c.program)?;
-            let (params, program) = load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
+            let (params, program) =
+                load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
             if let Err(r) = validate_active_program(
                 &program,
                 params.version,

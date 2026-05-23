@@ -197,7 +197,10 @@ pub fn register_arb_precompiles(map: &mut PrecompilesMap, ctx: Arc<ArbPrecompile
     let arbos_version = ctx.block.arbos_version;
     map.extend_precompiles([
         (ARBSYS_ADDRESS, create_arbsys_precompile(ctx.clone())),
-        (ARBGASINFO_ADDRESS, create_arbgasinfo_precompile(ctx.clone())),
+        (
+            ARBGASINFO_ADDRESS,
+            create_arbgasinfo_precompile(ctx.clone()),
+        ),
         (ARBINFO_ADDRESS, create_arbinfo_precompile(ctx.clone())),
         (
             ARBSTATISTICS_ADDRESS,

@@ -363,7 +363,14 @@ fn handle_cache_program(
             .map_err(ArbPrecompileError::fatal)?;
         acct.data.info.code_hash
     };
-    set_program_cached(input, ctx, gas_used, codehash, true, COLD_ACCOUNT_ACCESS_GAS)
+    set_program_cached(
+        input,
+        ctx,
+        gas_used,
+        codehash,
+        true,
+        COLD_ACCOUNT_ACCESS_GAS,
+    )
 }
 
 fn handle_evict_codehash(
