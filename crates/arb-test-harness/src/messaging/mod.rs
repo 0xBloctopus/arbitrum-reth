@@ -51,6 +51,21 @@ pub fn b64_l2_msg(bytes: &Bytes) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes.as_ref())
 }
 
+/// Hash of the inner signed tx in a kind-3 L2Message body, else `None`.
+pub fn signed_l2_tx_hash(msg: &L1Message) -> Option<alloy_primitives::B256> {
+    use base64::Engine;
+    if msg.header.kind != kinds::KIND_L2_MESSAGE {
+        return None;
+    }
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(msg.l2_msg.as_bytes())
+        .ok()?;
+    match body.split_first() {
+        Some((&kinds::KIND_SIGNED_L2_TX, rest)) => Some(alloy_primitives::keccak256(rest)),
+        _ => None,
+    }
+}
+
 pub const MAX_L2_MESSAGE_SIZE: usize = 256 * 1024;
 
 pub mod encoding {
