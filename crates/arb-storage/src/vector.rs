@@ -2,7 +2,9 @@ use alloy_primitives::B256;
 use arb_storage_errors::StorageError;
 
 use crate::{
-    backed_types::StorageBackedUint64, backend::StorageBackend, slot::derive_sub_key,
+    backed_types::StorageBackedUint64,
+    backend::{StorageBackend, SystemStateBackend},
+    slot::derive_sub_key,
     storage::Storage,
 };
 
@@ -29,7 +31,7 @@ pub(crate) fn open_sub_storage_vector_at(base_key: B256) -> SubStorageVector {
 }
 
 impl SubStorageVector {
-    pub fn length<B: StorageBackend>(&self, backend: &mut B) -> Result<u64, StorageError> {
+    pub fn length<B: SystemStateBackend>(&self, backend: &mut B) -> Result<u64, StorageError> {
         self.length.get(backend)
     }
 
@@ -38,13 +40,19 @@ impl SubStorageVector {
         derive_sub_key(self.base_key, &index.to_be_bytes())
     }
 
-    pub fn push<B: StorageBackend>(&self, backend: &mut B) -> Result<B256, StorageError> {
+    pub fn push<B: StorageBackend>(
+        &self,
+        backend: &mut B,
+    ) -> Result<B256, StorageError> {
         let len = self.length.get(backend)?;
         self.length.set(backend, len + 1)?;
         Ok(self.at(len))
     }
 
-    pub fn pop<B: StorageBackend>(&self, backend: &mut B) -> Result<Option<u64>, StorageError> {
+    pub fn pop<B: StorageBackend>(
+        &self,
+        backend: &mut B,
+    ) -> Result<Option<u64>, StorageError> {
         let len = self.length.get(backend)?;
         if len == 0 {
             return Ok(None);

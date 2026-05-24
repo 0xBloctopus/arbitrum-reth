@@ -1,7 +1,11 @@
 use alloy_primitives::{Address, B256, U256};
 use arb_storage_errors::StorageError;
 
-use crate::{backend::StorageBackend, slot::storage_key_map, state_ops::ARBOS_STATE_ADDRESS};
+use crate::{
+    backend::{StorageBackend, SystemStateBackend},
+    slot::storage_key_map,
+    state_ops::ARBOS_STATE_ADDRESS,
+};
 
 /// Variable-length byte storage.
 ///
@@ -34,13 +38,13 @@ impl StorageBackedBytes {
         storage_key_map(key, offset)
     }
 
-    fn load_u64<B: StorageBackend>(
+    fn load_u64<B: SystemStateBackend>(
         &self,
         backend: &mut B,
         offset: u64,
     ) -> Result<u64, StorageError> {
         let value = backend
-            .sload(self.account, self.slot(offset))
+            .sload_system(self.account, self.slot(offset))
             .map_err(Into::into)?;
         Ok(value.try_into().unwrap_or(0))
     }
@@ -56,13 +60,13 @@ impl StorageBackedBytes {
             .map_err(Into::into)
     }
 
-    fn load_word<B: StorageBackend>(
+    fn load_word<B: SystemStateBackend>(
         &self,
         backend: &mut B,
         offset: u64,
     ) -> Result<[u8; 32], StorageError> {
         let value = backend
-            .sload(self.account, self.slot(offset))
+            .sload_system(self.account, self.slot(offset))
             .map_err(Into::into)?;
         Ok(value.to_be_bytes::<32>())
     }
@@ -78,7 +82,7 @@ impl StorageBackedBytes {
             .map_err(Into::into)
     }
 
-    pub fn get<B: StorageBackend>(&self, backend: &mut B) -> Result<Vec<u8>, StorageError> {
+    pub fn get<B: SystemStateBackend>(&self, backend: &mut B) -> Result<Vec<u8>, StorageError> {
         let mut bytes_left = self.load_u64(backend, 0)? as usize;
         if bytes_left == 0 {
             return Ok(Vec::new());
@@ -98,7 +102,11 @@ impl StorageBackedBytes {
         Ok(ret)
     }
 
-    pub fn set<B: StorageBackend>(&self, backend: &mut B, b: &[u8]) -> Result<(), StorageError> {
+    pub fn set<B: StorageBackend>(
+        &self,
+        backend: &mut B,
+        b: &[u8],
+    ) -> Result<(), StorageError> {
         self.clear(backend)?;
         self.store_u64(backend, 0, b.len() as u64)?;
         let mut remaining = b;
@@ -118,7 +126,10 @@ impl StorageBackedBytes {
         Ok(())
     }
 
-    pub fn clear<B: StorageBackend>(&self, backend: &mut B) -> Result<(), StorageError> {
+    pub fn clear<B: StorageBackend>(
+        &self,
+        backend: &mut B,
+    ) -> Result<(), StorageError> {
         let bytes_left = self.load_u64(backend, 0)?;
         let mut offset = 1u64;
         let mut remaining = bytes_left;
@@ -130,7 +141,7 @@ impl StorageBackedBytes {
         self.store_u64(backend, 0, 0)
     }
 
-    pub fn size<B: StorageBackend>(&self, backend: &mut B) -> Result<u64, StorageError> {
+    pub fn size<B: SystemStateBackend>(&self, backend: &mut B) -> Result<u64, StorageError> {
         self.load_u64(backend, 0)
     }
 }
