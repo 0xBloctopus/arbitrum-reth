@@ -376,13 +376,26 @@ where
         self.invalidate_cached_overlay();
         self.invalidate_cached_prestate();
         let commit_latency_ms = result.duration.as_millis() as u64;
-        self.scheduler.lock().observe(commit_latency_ms);
+        let flush_interval_current = {
+            let mut sched = self.scheduler.lock();
+            sched.observe(commit_latency_ms);
+            sched.current_interval()
+        };
+        let dirty_pages_mb = read_dirty_pages_mb().unwrap_or(0);
+        let chain_len_unflushed = self
+            .in_memory_state
+            .head_state()
+            .map(|s| s.chain().count())
+            .unwrap_or(0) as u64;
         info!(
             target: "block_producer",
             flushed = result.count,
             last_block = result.last_num_hash.number,
-            duration_ms = commit_latency_ms,
-            "Background flush completed"
+            mdbx_commit_latency_ms = commit_latency_ms,
+            dirty_pages_mb,
+            flush_interval_current,
+            chain_len_unflushed,
+            "block flush"
         );
         true
     }
