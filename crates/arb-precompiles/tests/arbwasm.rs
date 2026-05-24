@@ -592,11 +592,9 @@ fn program_version_returns_program_version_for_fresh_program() {
 // then mirrors Nitro's `payActivationDataFee` for the success path. These
 // tests pin the symptom in both directions.
 
-const KEEPALIVE_DATA_PRICER_OFFSET: u8 = 3;
-
 fn data_pricer_slot(offset: u64) -> U256 {
     let programs_key = derive_subspace_key(ROOT_STORAGE_KEY, PROGRAMS_SUBSPACE);
-    let pricer_key = derive_subspace_key(programs_key.as_slice(), &[KEEPALIVE_DATA_PRICER_OFFSET]);
+    let pricer_key = derive_subspace_key(programs_key.as_slice(), arbos::programs::DATA_PRICER_KEY);
     map_slot(pricer_key.as_slice(), offset)
 }
 

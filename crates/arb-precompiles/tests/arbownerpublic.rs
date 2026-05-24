@@ -10,14 +10,14 @@ use arb_storage::{
     },
     ARBOS_STATE_ADDRESS,
 };
+use arbos::{
+    arbos_state::{
+        BROTLI_COMPRESSION_LEVEL_OFFSET, INFRA_FEE_ACCOUNT_OFFSET, NETWORK_FEE_ACCOUNT_OFFSET,
+        UPGRADE_TIMESTAMP_OFFSET, UPGRADE_VERSION_OFFSET,
+    },
+    l1_pricing::GAS_FLOOR_PER_TOKEN_OFFSET as L1_GAS_FLOOR_PER_TOKEN,
+};
 use common::{calldata, decode_address, decode_u256, decode_word, word_address, PrecompileTest};
-
-const NETWORK_FEE_ACCOUNT_OFFSET: u64 = 3;
-const INFRA_FEE_ACCOUNT_OFFSET: u64 = 6;
-const BROTLI_COMPRESSION_LEVEL_OFFSET: u64 = 7;
-const UPGRADE_VERSION_OFFSET: u64 = 1;
-const UPGRADE_TIMESTAMP_OFFSET: u64 = 2;
-const L1_GAS_FLOOR_PER_TOKEN: u64 = 12;
 
 fn arbownerpublic(ctx: std::sync::Arc<arb_context::ArbPrecompileCtx>) -> DynPrecompile {
     create_arbownerpublic_precompile(ctx)

@@ -7,11 +7,11 @@ use arb_storage::{
     layout::{root_slot, subspace_slot, L1_PRICING_SUBSPACE, L2_PRICING_SUBSPACE},
     ARBOS_STATE_ADDRESS,
 };
+use arbos::{
+    arbos_state::GENESIS_BLOCK_NUM_OFFSET, l1_pricing::PRICE_PER_UNIT_OFFSET as L1_PRICE_PER_UNIT,
+    l2_pricing::BASE_FEE_WEI_OFFSET as L2_BASE_FEE,
+};
 use common::{calldata, calldata_estimate, decode_u256, decode_word, word_u256, PrecompileTest};
-
-const GENESIS_BLOCK_NUM_OFFSET: u64 = 5;
-const L1_PRICE_PER_UNIT: u64 = 7;
-const L2_BASE_FEE: u64 = 2;
 
 fn nodeinterface(ctx: std::sync::Arc<arb_context::ArbPrecompileCtx>) -> DynPrecompile {
     create_nodeinterface_precompile(ctx)

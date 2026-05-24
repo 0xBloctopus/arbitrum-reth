@@ -51,10 +51,7 @@ fn get_tx_base_fee_returns_zero() {
     assert_eq!(decode_u256(run.output()), U256::ZERO);
 }
 
-const BATCH_POSTER_TABLE_KEY: &[u8] = &[0];
-const POSTER_ADDRS_KEY: &[u8] = &[0];
-const POSTER_INFO_KEY: &[u8] = &[1];
-const PAY_TO_OFFSET: u64 = 1;
+use arbos::l1_pricing::{BATCH_POSTER_TABLE_KEY, PAY_TO_OFFSET, POSTER_ADDRS_KEY, POSTER_INFO_KEY};
 
 fn poster_info_pay_to_slot(poster: Address) -> U256 {
     let l1_pricing_key = derive_subspace_key(ROOT_STORAGE_KEY, L1_PRICING_SUBSPACE);
