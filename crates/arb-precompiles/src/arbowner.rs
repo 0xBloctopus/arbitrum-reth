@@ -508,10 +508,10 @@ enum FeatureTimeKind {
     TransactionFiltering,
 }
 
-fn address_set<D, B>(
-    state: &arbos::arbos_state::ArbosState<D, B>,
+fn address_set<'a, D, B>(
+    state: &'a arbos::arbos_state::ArbosState<'_, D, B>,
     kind: AddressSetKind,
-) -> &AddressSet<D>
+) -> &'a AddressSet<'a, D>
 where
     B: arbos::burn::Burner,
 {
@@ -523,7 +523,7 @@ where
 }
 
 fn read_feature_time<D, B, C>(
-    state: &arbos::arbos_state::ArbosState<D, B>,
+    state: &arbos::arbos_state::ArbosState<'_, D, B>,
     backend: &mut C,
     kind: FeatureTimeKind,
 ) -> Result<u64, ArbPrecompileError>
@@ -539,7 +539,7 @@ where
 }
 
 fn write_feature_time<D, B, C>(
-    state: &arbos::arbos_state::ArbosState<D, B>,
+    state: &arbos::arbos_state::ArbosState<'_, D, B>,
     backend: &mut C,
     kind: FeatureTimeKind,
     value: u64,
@@ -1778,7 +1778,7 @@ fn handle_set_multi_gas_pricing_constraints(
 
 fn validate_multi_gas_exponents<D, B, C>(
     backend: &mut C,
-    arb_state: &arbos::arbos_state::ArbosState<D, B>,
+    arb_state: &arbos::arbos_state::ArbosState<'_, D, B>,
     count: u64,
     gas_used: u64,
 ) -> Result<(), ArbPrecompileError>
