@@ -164,7 +164,8 @@ pub fn initialize_arbos_state<D: Database>(
     })?;
 
     // 5. Initialize L2 pricing state.
-    let l2_sto = backing.open_sub_storage(&[1]); // L2_PRICING_SUBSPACE
+    // L2_PRICING_SUBSPACE.
+    let l2_sto = backing.open_sub_storage(&[1]);
     // SAFETY: see initial state_mut() comment.
     l2_pricing::L2PricingState::initialize(&l2_sto, unsafe { backing.state_mut() }).map_err(
         |e| GenesisError::InitSubsystem {
@@ -210,9 +211,11 @@ pub fn initialize_arbos_state<D: Database>(
     // freshly written version word is unreadable, which is unrecoverable
     // during genesis bring-up.
     // SAFETY: see initial state_mut() comment.
-    let mut arb_state =
-        ArbosState::open(unsafe { backing.state_mut() }, SystemBurner::new(None, false))
-            .expect("open ArbOS state after genesis initial setup");
+    let mut arb_state = ArbosState::open(
+        unsafe { backing.state_mut() },
+        SystemBurner::new(None, false),
+    )
+    .expect("open ArbOS state after genesis initial setup");
 
     // SAFETY: see initial state_mut() comment.
     arb_state
