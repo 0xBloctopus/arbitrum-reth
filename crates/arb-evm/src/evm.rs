@@ -362,12 +362,27 @@ impl<DB: Database> SystemStateBackend for JournalBackend<'_, DB> {
     type Error = StorageError;
 
     fn sload_system(&mut self, account: Address, slot: U256) -> Result<U256, Self::Error> {
+        // Route through the journal so in-flight writes within the current
+        // call are observed; the perf win comes from the per-block
+        // ArbosState cache, not from bypassing the journal here.
         let journal = &mut *self.journal;
-        journal.database.storage(account, slot).map_err(|e| {
-            StorageError::Database(DatabaseError::Read(DatabaseErrorInfo::new(format!(
-                "{e:?}"
-            ))))
-        })
+        journal
+            .inner
+            .load_account(&mut journal.database, account)
+            .map_err(|e| {
+                StorageError::Database(DatabaseError::Read(DatabaseErrorInfo::new(format!(
+                    "{e:?}"
+                ))))
+            })?;
+        let value = journal
+            .inner
+            .sload(&mut journal.database, account, slot, false)
+            .map_err(|e| {
+                StorageError::Database(DatabaseError::Read(DatabaseErrorInfo::new(format!(
+                    "{e:?}"
+                ))))
+            })?;
+        Ok(value.data)
     }
 }
 

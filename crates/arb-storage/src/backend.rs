@@ -88,7 +88,13 @@ impl SystemStateBackend for alloy_evm::EvmInternals<'_> {
     type Error = StorageError;
 
     fn sload_system(&mut self, account: Address, slot: U256) -> Result<U256, Self::Error> {
-        Database::storage(&mut self.db_mut(), account, slot)
+        // Reads route through the journal so that in-flight writes within the
+        // current tx are observed, matching geth-StateDB semantics. The
+        // journal's access-list bookkeeping is unavoidable on this path; the
+        // perf win comes from the per-block ArbosState cache reusing the
+        // descriptor across calls instead of reconstructing it.
+        alloy_evm::EvmInternals::sload(self, account, slot)
+            .map(|state_load| state_load.data)
             .map_err(|e| StorageError::Database(DatabaseError::custom(e)))
     }
 }

@@ -1300,7 +1300,7 @@ fn handle_is_member(
         .block
         .arbos_state(internals)
         .map_err(ArbPrecompileError::fatal)?;
-    let is_member = address_set(&arb_state, kind)
+    let is_member = address_set(arb_state, kind)
         .is_member(internals, addr)
         .map_err(ArbPrecompileError::fatal)?;
     let result = if is_member {
@@ -1329,7 +1329,7 @@ fn handle_get_all_members(
         .block
         .arbos_state(internals)
         .map_err(ArbPrecompileError::fatal)?;
-    let members = address_set(&arb_state, kind)
+    let members = address_set(arb_state, kind)
         .all_members(internals, MAX_MEMBERS)
         .map_err(ArbPrecompileError::fatal)?;
     let count = members.len() as u64;
@@ -1650,7 +1650,7 @@ fn handle_set_feature_time(
         .map_err(ArbPrecompileError::fatal)?;
 
     if timestamp == 0 {
-        write_feature_time(&arb_state, internals, kind, 0)?;
+        write_feature_time(arb_state, internals, kind, 0)?;
         crate::charge_precompile_gas(gas_used, SSTORE_GAS + COPY_GAS);
         return Ok(PrecompileOutput::new(
             (*gas_used).min(gas_limit),
@@ -1658,7 +1658,7 @@ fn handle_set_feature_time(
         ));
     }
 
-    let stored = read_feature_time(&arb_state, internals, kind)?;
+    let stored = read_feature_time(arb_state, internals, kind)?;
 
     if (stored > now + FEATURE_ENABLE_DELAY || stored == 0)
         && timestamp < now + FEATURE_ENABLE_DELAY
@@ -1669,7 +1669,7 @@ fn handle_set_feature_time(
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
 
-    write_feature_time(&arb_state, internals, kind, timestamp)?;
+    write_feature_time(arb_state, internals, kind, timestamp)?;
     crate::charge_precompile_gas(gas_used, SLOAD_GAS + SSTORE_GAS + COPY_GAS);
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
@@ -1712,12 +1712,12 @@ fn handle_add_to_set_with_feature_check(
         .arbos_state(internals)
         .map_err(ArbPrecompileError::fatal)?;
 
-    let enabled_time = read_feature_time(&arb_state, internals, feature_kind)?;
+    let enabled_time = read_feature_time(arb_state, internals, feature_kind)?;
     if enabled_time == 0 || enabled_time > now {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
 
-    address_set(&arb_state, set_kind)
+    address_set(arb_state, set_kind)
         .add(internals, addr)
         .map_err(ArbPrecompileError::fatal)?;
 
@@ -1754,7 +1754,7 @@ fn handle_remove_from_set(
         .map_err(ArbPrecompileError::fatal)?;
     let arbos_version = arb_state.arbos_version();
 
-    let set = address_set(&arb_state, set_kind);
+    let set = address_set(arb_state, set_kind);
     if !set
         .is_member(internals, addr)
         .map_err(ArbPrecompileError::fatal)?
@@ -1953,7 +1953,7 @@ fn handle_set_multi_gas_pricing_constraints(
             .add_multi_gas_constraint(internals, target, window, backlog, &weights)
             .map_err(ArbPrecompileError::fatal)?;
 
-        validate_multi_gas_exponents(internals, &arb_state, (i as u64) + 1, *gas_used)?;
+        validate_multi_gas_exponents(internals, arb_state, (i as u64) + 1, *gas_used)?;
     }
 
     let extra = (count * 16 + 2) * SSTORE_GAS + (count * 12 + 2) * SLOAD_GAS + COPY_GAS;
