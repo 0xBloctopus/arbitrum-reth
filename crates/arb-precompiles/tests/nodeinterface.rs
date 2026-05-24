@@ -2,11 +2,10 @@ mod common;
 
 use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::U256;
-use arb_precompiles::{
-    create_nodeinterface_precompile,
-    storage_slot::{
-        root_slot, subspace_slot, ARBOS_STATE_ADDRESS, L1_PRICING_SUBSPACE, L2_PRICING_SUBSPACE,
-    },
+use arb_precompiles::create_nodeinterface_precompile;
+use arb_storage::{
+    layout::{root_slot, subspace_slot, L1_PRICING_SUBSPACE, L2_PRICING_SUBSPACE},
+    ARBOS_STATE_ADDRESS,
 };
 use common::{calldata, calldata_estimate, decode_u256, decode_word, word_u256, PrecompileTest};
 

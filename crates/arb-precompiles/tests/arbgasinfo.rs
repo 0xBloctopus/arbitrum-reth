@@ -3,9 +3,10 @@ mod common;
 use alloy_evm::precompiles::DynPrecompile;
 use alloy_primitives::{address, Address, U256};
 use arb_context::ArbPrecompileCtx;
-use arb_precompiles::{
-    create_arbgasinfo_precompile,
-    storage_slot::{subspace_slot, ARBOS_STATE_ADDRESS, L1_PRICING_SUBSPACE, L2_PRICING_SUBSPACE},
+use arb_precompiles::create_arbgasinfo_precompile;
+use arb_storage::{
+    layout::{subspace_slot, L1_PRICING_SUBSPACE, L2_PRICING_SUBSPACE},
+    ARBOS_STATE_ADDRESS,
 };
 use common::{calldata, decode_address, decode_u256, decode_word, PrecompileTest};
 use std::sync::Arc;
@@ -484,13 +485,10 @@ const TOTAL_FUNDS_DUE_OFFSET: u64 = 0;
 const L1_PRICER_FUNDS_POOL: Address = address!("a4b05fffffffffffffffffffffffffffffffffff");
 
 fn batch_poster_total_funds_due_slot() -> U256 {
-    use arb_precompiles::storage_slot::derive_subspace_key;
-    let l1_key = derive_subspace_key(
-        arb_precompiles::storage_slot::ROOT_STORAGE_KEY,
-        L1_PRICING_SUBSPACE,
-    );
+    use arb_storage::layout::{derive_subspace_key, map_slot, ROOT_STORAGE_KEY};
+    let l1_key = derive_subspace_key(ROOT_STORAGE_KEY, L1_PRICING_SUBSPACE);
     let bpt_key = derive_subspace_key(l1_key.as_slice(), BATCH_POSTER_TABLE_KEY);
-    arb_precompiles::storage_slot::map_slot(bpt_key.as_slice(), TOTAL_FUNDS_DUE_OFFSET)
+    map_slot(bpt_key.as_slice(), TOTAL_FUNDS_DUE_OFFSET)
 }
 
 #[test]
