@@ -39,6 +39,7 @@ pub struct ArbrethProcess {
 
 impl ArbrethProcess {
     pub fn start(ctx: &NodeStartCtx) -> Result<Self> {
+        crate::node::reaper::reap_orphan_arbreth();
         let binary = match &ctx.binary {
             Some(b) => b.clone(),
             None => std::env::var(ARB_BINARY_ENV).map_err(|_| HarnessError::MissingEnv {
