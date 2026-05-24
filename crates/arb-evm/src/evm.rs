@@ -1638,6 +1638,20 @@ where
     }
 }
 
+/// Accessor for the `Arc<ArbPrecompileCtx>` that an EVM factory most recently
+/// staged for the next [`EvmFactory::create_evm`] call. The block executor
+/// reuses this `Arc` so its per-tx writes share an allocation with the EVM
+/// precompile handler closures (which capture the `Arc` at registration time).
+pub trait ArbEvmFactoryStaged {
+    fn staged_precompile_ctx(&self) -> Option<std::sync::Arc<arb_context::ArbPrecompileCtx>>;
+}
+
+impl ArbEvmFactoryStaged for ArbEvmFactory {
+    fn staged_precompile_ctx(&self) -> Option<std::sync::Arc<arb_context::ArbPrecompileCtx>> {
+        self.staged()
+    }
+}
+
 impl<DB: Database, I> core::ops::Deref for ArbEvm<DB, I> {
     type Target = EthEvmContext<DB>;
     fn deref(&self) -> &Self::Target {

@@ -139,7 +139,7 @@ impl<R, Spec, EvmF> ArbBlockExecutorFactory<R, Spec, EvmF> {
         R: ReceiptBuilder,
         Spec: EthExecutorSpec + Clone,
         I: Inspector<EvmF::Context<&'a mut State<DB>>> + 'a,
-        EvmF: EvmFactory,
+        EvmF: EvmFactory + crate::evm::ArbEvmFactoryStaged,
     {
         let extra_bytes = ctx.extra_data.as_ref();
         let (delayed_messages_read, l2_block_number) = decode_extra_fields(extra_bytes);
@@ -156,8 +156,10 @@ impl<R, Spec, EvmF> ArbBlockExecutorFactory<R, Spec, EvmF> {
             inner: EthBlockExecutor::new(evm, ctx, &self.spec, &self.receipt_builder),
             arb_hooks: None,
             arb_ctx,
-            precompile_ctx: std::sync::Arc::new(arb_context::ArbPrecompileCtx::default()),
-            allow_debug_precompiles: self.allow_debug_precompiles,
+            // Reuse the per-block ctx the factory staged for the EVM so the
+            // EVM-side precompile handlers and the executor's per-tx writes go
+            // through the same `Arc<ArbPrecompileCtx>`.
+            precompile_ctx: self.evm_factory.staged_precompile_ctx().unwrap_or_default(),
             pending_tx: None,
             block_gas_left: 0,
             user_txs_processed: 0,
@@ -181,8 +183,10 @@ where
         > + 'static,
     Spec: EthExecutorSpec + Clone + 'static,
     EvmF: EvmFactory<
-        Tx: FromRecoveredTx<R::Transaction> + FromTxWithEncoded<R::Transaction> + ArbTransactionEnv,
-    >,
+            Tx: FromRecoveredTx<R::Transaction>
+                    + FromTxWithEncoded<R::Transaction>
+                    + ArbTransactionEnv,
+        > + crate::evm::ArbEvmFactoryStaged,
     Self: 'static,
 {
     type EvmFactory = EvmF;
@@ -217,8 +221,13 @@ where
             inner: EthBlockExecutor::new(evm, ctx, &self.spec, &self.receipt_builder),
             arb_hooks: None,
             arb_ctx,
-            precompile_ctx: std::sync::Arc::new(arb_context::ArbPrecompileCtx::default()),
-            allow_debug_precompiles: self.allow_debug_precompiles,
+            // Reuse the per-block ctx the factory staged for the EVM so the
+            // EVM-side precompile handlers and the executor's per-tx writes go
+            // through the same `Arc<ArbPrecompileCtx>`.
+            precompile_ctx: <EvmF as crate::evm::ArbEvmFactoryStaged>::staged_precompile_ctx(
+                &self.evm_factory,
+            )
+            .unwrap_or_default(),
             pending_tx: None,
             block_gas_left: 0,
             user_txs_processed: 0,
@@ -289,7 +298,6 @@ pub struct ArbBlockExecutor<'a, Evm, Spec, R: ReceiptBuilder> {
     pub arb_ctx: ArbBlockExecutionCtx,
     /// Per-block precompile context handle (per-tx scratch writes).
     pub precompile_ctx: std::sync::Arc<arb_context::ArbPrecompileCtx>,
-    allow_debug_precompiles: bool,
     /// Per-tx state between execute and commit.
     pending_tx: Option<PendingArbTx>,
     /// Remaining block gas for rate limiting.
@@ -388,25 +396,18 @@ impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
         let arbos_version = arb_state.arbos_version();
         self.arb_ctx.arbos_version = arbos_version;
 
-        let block_ctx = arb_context::BlockCtx::new(
-            arbos_version,
-            self.arb_ctx.block_timestamp,
-            self.arb_ctx.l1_block_number,
-            self.arb_ctx.l2_block_number,
-            self.allow_debug_precompiles,
-        );
-        block_ctx.cache_l1_block_number(self.arb_ctx.l2_block_number, self.arb_ctx.l1_block_number);
-
-        let prior_l2_cache = self.precompile_ctx.block.l2_blockhash_cache.lock().clone();
-        *block_ctx.l2_blockhash_cache.lock() = prior_l2_cache;
-
-        let new_ctx = std::sync::Arc::new(arb_context::ArbPrecompileCtx {
-            block: std::sync::Arc::new(block_ctx),
-            tx: std::sync::Arc::new(parking_lot::Mutex::new(arb_context::TxCtx::default())),
-            caller_stack: std::sync::Arc::new(parking_lot::Mutex::new(Vec::new())),
-            evm_depth: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-        });
-        self.precompile_ctx = new_ctx;
+        // Reset the per-tx scratch on the existing precompile ctx Arc rather
+        // than allocating a new one. The EVM-side precompile handler closures
+        // captured this Arc at registration time, so swapping the Arc here
+        // would silently orphan their reads from the executor's per-tx writes
+        // (`set_sender`, `set_stylus_call_value`, etc.). The block-level
+        // `BlockCtx` fields are populated when the factory stages the per-block
+        // ctx (`evm_env` path) and stay valid for the lifetime of this block.
+        self.precompile_ctx.reset_tx();
+        self.precompile_ctx.reset_caller_stack();
+        self.precompile_ctx
+            .block
+            .cache_l1_block_number(self.arb_ctx.l2_block_number, self.arb_ctx.l1_block_number);
 
         if arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_60 {
             let cap = arb_state
