@@ -161,7 +161,7 @@ pub struct ArbBlockProducer<Provider> {
     accumulated_trie_input: Mutex<Arc<TrieInputSorted>>,
     flushing_trie_input: Mutex<Option<Arc<TrieInputSorted>>>,
     pending_flush: AtomicBool,
-    produce_lock: Mutex<()>,
+    produce_lock: tokio::sync::Mutex<()>,
     cached_init: Mutex<Option<arbos::arbos_types::ParsedInitMessage>>,
     /// Finality markers propagated by `nitroexecution_setFinalityData`.
     finality: Mutex<FinalityMarkers>,
@@ -216,7 +216,7 @@ where
             accumulated_trie_input: Mutex::new(Arc::new(TrieInputSorted::default())),
             flushing_trie_input: Mutex::new(None),
             pending_flush: AtomicBool::new(false),
-            produce_lock: Mutex::new(()),
+            produce_lock: tokio::sync::Mutex::new(()),
             cached_init: Mutex::new(None),
             finality: Mutex::new(FinalityMarkers::default()),
             validated_watcher: Mutex::new(None),
@@ -387,7 +387,7 @@ where
         true
     }
 
-    fn apply_backpressure(&self) {
+    async fn apply_backpressure(&self) {
         let chain_len = self
             .in_memory_state
             .head_state()
@@ -401,17 +401,32 @@ where
             self.start_async_flush();
         }
         let start = std::time::Instant::now();
-        let mut last_log = start;
-        while !self.drain_completed_flush() {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            if last_log.elapsed() >= std::time::Duration::from_secs(5) {
-                warn!(
-                    target: "block_producer",
-                    chain_len,
-                    waited_ms = start.elapsed().as_millis() as u64,
-                    "Backpressure: still waiting on flush"
-                );
-                last_log = std::time::Instant::now();
+        let notifier = crate::launcher::flush_notifier();
+        loop {
+            if let Some(n) = notifier.as_ref() {
+                // Register interest before checking, so notifications fired
+                // between the check and the await are not missed.
+                let notified = n.notified();
+                if self.drain_completed_flush() {
+                    break;
+                }
+                let waited =
+                    tokio::time::timeout(std::time::Duration::from_secs(30), notified)
+                        .await
+                        .is_ok();
+                if !waited {
+                    warn!(
+                        target: "block_producer",
+                        chain_len,
+                        waited_ms = start.elapsed().as_millis() as u64,
+                        "Backpressure: flush notification timed out, polling once"
+                    );
+                }
+            } else {
+                if self.drain_completed_flush() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
         }
         warn!(
@@ -423,13 +438,13 @@ where
         );
     }
 
-    fn produce_block_with_execution(
+    async fn produce_block_with_execution(
         &self,
         input: &BlockProductionInput,
         parsed_txs: Vec<ParsedTransaction>,
     ) -> Result<ProducedBlock, BlockProducerError> {
         self.drain_completed_flush();
-        self.apply_backpressure();
+        self.apply_backpressure().await;
 
         let head_num = self.head_block_number()?;
         let l2_block_number = head_num + 1;
@@ -1219,7 +1234,7 @@ where
         msg_idx: u64,
         input: BlockProductionInput,
     ) -> Result<ProducedBlock, BlockProducerError> {
-        let _lock = self.produce_lock.lock();
+        let _lock = self.produce_lock.lock().await;
 
         // Validate that this message is the next expected one.
         let head_num = self.head_block_number()?;
@@ -1256,11 +1271,11 @@ where
             "Parsed L1 message"
         );
 
-        self.produce_block_with_execution(&input, parsed_txs)
+        self.produce_block_with_execution(&input, parsed_txs).await
     }
 
     async fn reset_to_block(&self, target_block_number: u64) -> Result<(), BlockProducerError> {
-        let _lock = self.produce_lock.lock();
+        let _lock = self.produce_lock.lock().await;
         let current = self.head_block_num.load(Ordering::SeqCst);
         if target_block_number > current {
             return Err(BlockProducerError::Unexpected(format!(
