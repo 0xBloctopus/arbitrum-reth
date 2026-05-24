@@ -423,10 +423,9 @@ where
                 if self.drain_completed_flush() {
                     break;
                 }
-                let waited =
-                    tokio::time::timeout(std::time::Duration::from_secs(30), notified)
-                        .await
-                        .is_ok();
+                let waited = tokio::time::timeout(std::time::Duration::from_secs(30), notified)
+                    .await
+                    .is_ok();
                 if !waited {
                     warn!(
                         target: "block_producer",
