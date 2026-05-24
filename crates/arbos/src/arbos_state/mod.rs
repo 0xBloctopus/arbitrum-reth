@@ -13,7 +13,7 @@ use arb_primitives::arbos_versions::{
 use arb_storage::{
     get_account_balance, set_account_code, set_account_nonce, storage_key_map, Detached, Storage,
     StorageBackedAddress, StorageBackedBigUint, StorageBackedBytes, StorageBackedUint64,
-    StorageBackend, ARBOS_STATE_ADDRESS, FILTERED_TX_STATE_ADDRESS,
+    StorageBackend, SystemStateBackend, ARBOS_STATE_ADDRESS, FILTERED_TX_STATE_ADDRESS,
 };
 
 use crate::{
@@ -625,6 +625,29 @@ pub fn arbos_from_input<S: StorageBackend, B: Burner>(
     let version_slot = storage_key_map(&[], VERSION_OFFSET);
     let raw_version =
         StorageBackend::sload(backend, ARBOS_STATE_ADDRESS, version_slot).map_err(Into::into)?;
+    open_detached(raw_version, burner)
+}
+
+/// Open a detached [`ArbosState`] backed by any [`SystemStateBackend`].
+///
+/// Behaviourally identical to [`arbos_from_input`] but reads the version slot
+/// via the non-journaled [`SystemStateBackend::sload_system`] path. Intended
+/// for callers that want to skip the EVM journal — typically precompile
+/// handlers caching the ArbosState across calls within a single block.
+pub fn arbos_from_input_system<S: SystemStateBackend, B: Burner>(
+    backend: &mut S,
+    burner: B,
+) -> Result<ArbosState<'static, Detached, B>, ArbosStateError> {
+    let version_slot = storage_key_map(&[], VERSION_OFFSET);
+    let raw_version = SystemStateBackend::sload_system(backend, ARBOS_STATE_ADDRESS, version_slot)
+        .map_err(Into::into)?;
+    open_detached(raw_version, burner)
+}
+
+fn open_detached<B: Burner>(
+    raw_version: U256,
+    burner: B,
+) -> Result<ArbosState<'static, Detached, B>, ArbosStateError> {
     let arbos_version = u64::try_from(raw_version).unwrap_or(0);
     if arbos_version == 0 {
         return Err(ArbosStateError::Uninitialised);
