@@ -95,10 +95,7 @@ impl Queue {
         Ok(Some(val))
     }
 
-    pub fn get<B: StorageBackend>(
-        &self,
-        backend: &mut B,
-    ) -> Result<Option<B256>, StorageError> {
+    pub fn get<B: StorageBackend>(&self, backend: &mut B) -> Result<Option<B256>, StorageError> {
         if self.is_empty(backend)? {
             return Ok(None);
         }
@@ -109,11 +106,7 @@ impl Queue {
         Ok(Some(val))
     }
 
-    pub fn put<B: StorageBackend>(
-        &self,
-        backend: &mut B,
-        value: B256,
-    ) -> Result<(), StorageError> {
+    pub fn put<B: StorageBackend>(&self, backend: &mut B, value: B256) -> Result<(), StorageError> {
         let put = self.next_put.get(backend)?;
         self.store_slot(backend, put, value)?;
         self.next_put.set(backend, put + 1)?;
@@ -121,10 +114,7 @@ impl Queue {
     }
 
     /// Removes the last element from the back (most recently put).
-    pub fn shift<B: StorageBackend>(
-        &self,
-        backend: &mut B,
-    ) -> Result<Option<B256>, StorageError> {
+    pub fn shift<B: StorageBackend>(&self, backend: &mut B) -> Result<Option<B256>, StorageError> {
         if self.is_empty(backend)? {
             return Ok(None);
         }

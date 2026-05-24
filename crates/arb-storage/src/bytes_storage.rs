@@ -102,11 +102,7 @@ impl StorageBackedBytes {
         Ok(ret)
     }
 
-    pub fn set<B: StorageBackend>(
-        &self,
-        backend: &mut B,
-        b: &[u8],
-    ) -> Result<(), StorageError> {
+    pub fn set<B: StorageBackend>(&self, backend: &mut B, b: &[u8]) -> Result<(), StorageError> {
         self.clear(backend)?;
         self.store_u64(backend, 0, b.len() as u64)?;
         let mut remaining = b;
@@ -126,10 +122,7 @@ impl StorageBackedBytes {
         Ok(())
     }
 
-    pub fn clear<B: StorageBackend>(
-        &self,
-        backend: &mut B,
-    ) -> Result<(), StorageError> {
+    pub fn clear<B: StorageBackend>(&self, backend: &mut B) -> Result<(), StorageError> {
         let bytes_left = self.load_u64(backend, 0)?;
         let mut offset = 1u64;
         let mut remaining = bytes_left;

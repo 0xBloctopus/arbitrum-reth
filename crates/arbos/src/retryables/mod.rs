@@ -403,10 +403,7 @@ fn clear_ticket_fields<D, B: StorageBackend>(
 }
 
 impl<D> Retryable<'_, D> {
-    pub fn num_tries<B: SystemStateBackend>(
-        &self,
-        backend: &mut B,
-    ) -> Result<u64, RetryableError> {
+    pub fn num_tries<B: SystemStateBackend>(&self, backend: &mut B) -> Result<u64, RetryableError> {
         Ok(self.num_tries.get(backend)?)
     }
 

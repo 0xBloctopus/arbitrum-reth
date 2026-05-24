@@ -364,7 +364,9 @@ impl<DB: Database> SystemStateBackend for JournalBackend<'_, DB> {
     fn sload_system(&mut self, account: Address, slot: U256) -> Result<U256, Self::Error> {
         let journal = &mut *self.journal;
         journal.database.storage(account, slot).map_err(|e| {
-            StorageError::Database(DatabaseError::Read(DatabaseErrorInfo::new(format!("{e:?}"))))
+            StorageError::Database(DatabaseError::Read(DatabaseErrorInfo::new(format!(
+                "{e:?}"
+            ))))
         })
     }
 }
