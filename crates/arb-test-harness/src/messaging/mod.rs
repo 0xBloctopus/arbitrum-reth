@@ -66,6 +66,30 @@ pub fn signed_l2_tx_hash(msg: &L1Message) -> Option<alloy_primitives::B256> {
     }
 }
 
+/// The retryable ticketId for a kind-9 RetryableSubmit message: the submit tx
+/// hash, derived exactly as the node does (parse the body, alias the L1 sender).
+pub fn submit_retryable_ticket_id(
+    msg: &L1Message,
+    chain_id: u64,
+) -> Option<alloy_primitives::B256> {
+    use alloy_eips::eip2718::Encodable2718;
+    use base64::Engine;
+    let body = base64::engine::general_purpose::STANDARD
+        .decode(msg.l2_msg.as_bytes())
+        .ok()?;
+    let parsed = arbos::parse_l2::parse_l2_transactions(
+        msg.header.kind,
+        msg.header.sender,
+        &body,
+        msg.header.request_id,
+        Some(alloy_primitives::U256::from(msg.header.base_fee_l1)),
+        chain_id,
+    )
+    .ok()?;
+    let signed = arbos::parse_l2::parsed_tx_to_signed(parsed.first()?, chain_id)?;
+    Some(signed.trie_hash())
+}
+
 pub const MAX_L2_MESSAGE_SIZE: usize = 256 * 1024;
 
 pub mod encoding {

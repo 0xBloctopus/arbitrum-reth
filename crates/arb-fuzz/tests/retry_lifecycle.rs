@@ -3,10 +3,11 @@ use arb_fuzz::{
     arbitrary_impls::message_step,
     guards::GuardedRun,
     scaffolding::{fund_interop_eoa, selector4, signed, FUZZ_L1_BASE_FEE, INVOKE_GAS_CAP},
-    shared_nodes::next_msg_idx,
+    shared_nodes::{next_msg_idx, FUZZ_L2_CHAIN_ID},
 };
 use arb_test_harness::messaging::{
-    apply_l1_to_l2_alias, DepositBuilder, MessageBuilder, RetryableSubmitBuilder,
+    apply_l1_to_l2_alias, submit_retryable_ticket_id, DepositBuilder, MessageBuilder,
+    RetryableSubmitBuilder,
 };
 
 const ARBRETRYABLETX: Address = Address::new([
@@ -62,8 +63,9 @@ fn submit_retryable(
     }
     .build()
     .expect("submit");
+    let ticket = submit_retryable_ticket_id(&msg, FUZZ_L2_CHAIN_ID).expect("ticket id");
     steps.push(message_step(idx, msg, idx));
-    request_id
+    ticket
 }
 
 #[test]
@@ -78,8 +80,8 @@ fn submit_then_get_timeout_returns_nonzero() {
         l1_sender,
         Address::repeat_byte(0xbb),
         B256::repeat_byte(0x10),
-        INVOKE_GAS_CAP,
-        U256::from(2_000_000_000u64),
+        100_000,
+        U256::from(1u64),
     );
     let tx = signed(
         0,
@@ -110,8 +112,8 @@ fn submit_then_get_beneficiary_returns_refund_addr() {
         l1_sender,
         Address::repeat_byte(0xbc),
         B256::repeat_byte(0x11),
-        INVOKE_GAS_CAP,
-        U256::from(2_000_000_000u64),
+        100_000,
+        U256::from(1u64),
     );
     let tx = signed(
         0,
