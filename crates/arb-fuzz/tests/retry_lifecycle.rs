@@ -265,6 +265,54 @@ fn submit_two_then_query_both() {
 
 #[test]
 #[ignore]
+fn submit_callvalue_autoredeem_excess_refund_to_fresh_addr() {
+    let mut steps = Vec::new();
+    fund_interop_eoa(&mut steps);
+    let l1_sender = Address::repeat_byte(0xa8);
+    fund_l1_sender(&mut steps, l1_sender);
+
+    let target = Address::repeat_byte(0xb8);
+    let excess_refund = Address::repeat_byte(0xe1);
+    let callvalue_refund = Address::repeat_byte(0xe2);
+    let l2_call_value = U256::from(10u128).pow(U256::from(18u64));
+    let gas_limit = 200_000u64;
+    let max_fee = U256::from(2_000_000_000u64);
+    let max_submission_fee = U256::from(10u128).pow(U256::from(15u64));
+    let deposit = l2_call_value
+        + max_submission_fee
+        + max_fee * U256::from(gas_limit)
+        + U256::from(10u128).pow(U256::from(17u64));
+
+    let idx = next_msg_idx();
+    let msg = RetryableSubmitBuilder {
+        l1_sender,
+        to: target,
+        l2_call_value,
+        deposit_value: deposit,
+        max_submission_fee,
+        excess_fee_refund_address: excess_refund,
+        call_value_refund_address: callvalue_refund,
+        gas_limit,
+        max_fee_per_gas: max_fee,
+        data: Bytes::new(),
+        l1_block_number: 3,
+        timestamp: 1_700_000_010,
+        request_id: Some(B256::repeat_byte(0x20)),
+    }
+    .build()
+    .expect("submit");
+    steps.push(message_step(idx, msg, idx));
+
+    GuardedRun::new("retryable_callvalue_fresh_excess_refund", steps)
+        .diff_account(target)
+        .diff_account(excess_refund)
+        .diff_account(callvalue_refund)
+        .diff_account(apply_l1_to_l2_alias(l1_sender))
+        .run();
+}
+
+#[test]
+#[ignore]
 fn redeem_twice_second_fails() {
     let mut steps = Vec::new();
     fund_interop_eoa(&mut steps);
