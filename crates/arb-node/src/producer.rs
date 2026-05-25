@@ -82,10 +82,9 @@ fn max_inflight() -> usize {
     })
 }
 
-/// Adaptive flush interval based on observed commit latency and dirty pages.
+/// Adaptive flush interval driven by observed commit latency.
 pub struct FlushScheduler {
     target_commit_latency_ms: u64,
-    max_dirty_pages_mb: u64,
     min_interval: u64,
     max_interval: u64,
     current_interval: u64,
@@ -99,7 +98,6 @@ impl FlushScheduler {
         let current_interval = initial_interval.clamp(min_interval, max_interval);
         Self {
             target_commit_latency_ms: 1000,
-            max_dirty_pages_mb: 200,
             min_interval,
             max_interval,
             current_interval,
@@ -107,12 +105,7 @@ impl FlushScheduler {
         }
     }
 
-    pub fn should_flush(&self, since_last: u64, dirty_mb: Option<u64>) -> bool {
-        if let Some(mb) = dirty_mb {
-            if mb > self.max_dirty_pages_mb {
-                return true;
-            }
-        }
+    pub fn should_flush(&self, since_last: u64) -> bool {
         since_last >= self.current_interval
     }
 
@@ -1148,10 +1141,8 @@ where
 
         self.head_block_num.store(l2_block_number, Ordering::SeqCst);
 
-        // Start async flush when scheduler signals threshold or dirty cap (non-blocking).
         let since_flush = self.blocks_since_flush.fetch_add(1, Ordering::SeqCst) + 1;
-        let dirty_mb = read_dirty_pages_mb();
-        let should_flush = self.scheduler.lock().should_flush(since_flush, dirty_mb);
+        let should_flush = self.scheduler.lock().should_flush(since_flush);
         if should_flush && !self.pending_flush.load(Ordering::SeqCst) {
             self.start_async_flush();
         }
