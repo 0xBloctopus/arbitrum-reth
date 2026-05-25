@@ -106,6 +106,7 @@ fn handle_lookup(
         .lookup(internals, addr)
         .map_err(ArbPrecompileError::fatal)?;
     if !exists {
+        crate::charge_precompile_gas(gas_used, SLOAD_GAS);
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
 
@@ -128,11 +129,17 @@ fn handle_lookup_index(
     let internals = input.internals_mut();
     let arb_state = arbos_from_input(internals, SystemBurner::new(None, false))
         .map_err(ArbPrecompileError::fatal)?;
-    let addr = arb_state
+    let addr = match arb_state
         .address_table
         .lookup_index(internals, index)
         .map_err(ArbPrecompileError::fatal)?
-        .ok_or_else(|| ArbPrecompileError::empty_revert(*gas_used))?;
+    {
+        Some(a) => a,
+        None => {
+            crate::charge_precompile_gas(gas_used, SLOAD_GAS);
+            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        }
+    };
 
     let mut out = [0u8; 32];
     out[12..32].copy_from_slice(addr.as_slice());
