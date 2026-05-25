@@ -480,6 +480,7 @@ fn handle_rectify_chain_owner(
         Ok(()) => {}
         Err(AddressSetError::Storage(s)) => return Err(ArbPrecompileError::fatal(s).into()),
         Err(AddressSetError::NotMember | AddressSetError::MappingAlreadyConsistent) => {
+            crate::charge_precompile_gas(gas_used, SLOAD_GAS);
             return Err(ArbPrecompileError::empty_revert(*gas_used).into())
         }
     }

@@ -60,7 +60,12 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     let call =
         match IArbFilteredTxManager::ArbFilteredTransactionsManagerCalls::abi_decode(input.data) {
             Ok(c) => c,
-            Err(_) => return crate::burn_all_revert(gas_limit),
+            Err(_) => {
+                // The free-access wrapper already ran (membership check); a bad
+                // selector reverts with the wrapper's gas, not the whole limit.
+                let final_gas = if is_filterer { 0 } else { wrapper_gas.min(gas_limit) };
+                return Ok(PrecompileOutput::new_reverted(final_gas, Default::default()));
+            }
         };
 
     let mut gas_used = 0u64;
