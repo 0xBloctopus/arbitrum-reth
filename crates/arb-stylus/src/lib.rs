@@ -219,8 +219,14 @@ pub fn get_wasm_from_root(
         }
         compressed.extend_from_slice(&fragment[3..]);
     }
-    nitro_brotli::decompress(&compressed, dict)
-        .map_err(|e| StylusError::Decompression(format!("{e:?}")))
+    let wasm = nitro_brotli::decompress(&compressed, dict)
+        .map_err(|e| StylusError::Decompression(format!("{e:?}")))?;
+    if wasm.len() != parsed.decompressed_length as usize {
+        return Err(StylusError::InvalidProgram(
+            "decompressed length does not match the declared length",
+        ));
+    }
+    Ok(wasm)
 }
 
 /// Gas charged for reading one fragment of `code_size` bytes during activation,
@@ -322,6 +328,22 @@ mod stylus_root_tests {
         })
         .unwrap();
         assert_eq!(out, payload);
+    }
+
+    #[test]
+    fn decompressed_length_mismatch_rejected_even_unenforced() {
+        let payload = b"\x00asm\x01\x00\x00\x00 stylus wasm body bytes for the fragment round trip".to_vec();
+        let compressed =
+            nitro_brotli::compress(&payload, 0, 22, nitro_brotli::Dictionary::Empty).unwrap();
+        let frag = make_fragment(&compressed);
+        let a = Address::repeat_byte(0x11);
+        // Declare a length one byte longer than the fragments actually decompress to.
+        let root = make_root(0, payload.len() as u32 + 1, &[a]);
+        let err = get_wasm_from_root(&root, 100_000, 4, false, |_| Ok(frag.clone())).unwrap_err();
+        assert!(matches!(
+            err,
+            StylusError::InvalidProgram("decompressed length does not match the declared length")
+        ));
     }
 
     #[test]
