@@ -17,6 +17,7 @@ pub const ARBADDRESSTABLE_ADDRESS: Address = Address::new([
 
 const SLOAD_GAS: u64 = 800;
 const SSTORE_GAS: u64 = 20_000;
+const SSTORE_ZERO_GAS: u64 = 5_000;
 const COPY_GAS: u64 = 3;
 
 pub fn create_arbaddresstable_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
@@ -190,7 +191,17 @@ fn handle_register(
         ));
     }
 
-    crate::charge_precompile_gas(gas_used, 2 * SLOAD_GAS + 3 * SSTORE_GAS + COPY_GAS);
+    // The index→address slot stores the address, so a zero address is a
+    // zero-value write, charged the reset price.
+    let index_write = if addr.is_zero() {
+        SSTORE_ZERO_GAS
+    } else {
+        SSTORE_GAS
+    };
+    crate::charge_precompile_gas(
+        gas_used,
+        2 * SLOAD_GAS + 2 * SSTORE_GAS + index_write + COPY_GAS,
+    );
 
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
