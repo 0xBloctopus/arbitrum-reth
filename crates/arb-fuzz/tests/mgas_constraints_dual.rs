@@ -333,6 +333,164 @@ fn multi_gas_write_constraint_backlog_matches_nitro() {
     );
 }
 
+const ARBOWNERPUBLIC: Address =
+    Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x6b]);
+const ARBNATIVETOKENMANAGER: Address =
+    Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x73]);
+
+fn word_addr(a: Address) -> [u8; 32] {
+    let mut w = [0u8; 32];
+    w[12..].copy_from_slice(a.as_slice());
+    w
+}
+
+fn word_u256(v: U256) -> [u8; 32] {
+    v.to_be_bytes()
+}
+
+/// Native-token mint/burn parity, including the over-burn path: minting and a
+/// within-balance burn must match Nitro, and a burn exceeding the balance must
+/// revert having paid the membership read and the mint/burn charge (not the
+/// whole gas limit), byte-for-byte with Nitro.
+#[test]
+#[ignore]
+fn native_token_mint_burn_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    // Enabling native-token management requires a one-week delay (FeatureEnableDelay),
+    // so the feature must be scheduled a week out and enrolled only once a block at
+    // or after that time is produced.
+    const T0: u64 = 1_700_000_000;
+    const FEATURE_DELAY: u64 = 7 * 24 * 60 * 60;
+    const ENABLE_TIME: u64 = T0 + FEATURE_DELAY;
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(20u64)),
+        l1_block_number: 1,
+        timestamp: T0,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    let owner_call = |nonce: u64, to: Address, data: Vec<u8>, ts: u64| {
+        let mut b = owner_tx_l1(nonce, Some(to), data, 2_000_000, 0);
+        b.timestamp = ts;
+        b.build().expect("owner call")
+    };
+
+    // Zero the L1 price so the receipts reflect L2 execution (the precompile
+    // gas), not poster cost.
+    let mut set_price = selector4("setL1PricePerUnit(uint256)").to_vec();
+    set_price.extend_from_slice(&word(0));
+    let i = idx.next();
+    steps.push(msg_step(i, owner_call(0, ARBOWNER, set_price, T0), 1));
+
+    // Schedule native-token management one week out.
+    let mut enable = selector4("setNativeTokenManagementFrom(uint64)").to_vec();
+    enable.extend_from_slice(&word(ENABLE_TIME));
+    let i = idx.next();
+    steps.push(msg_step(i, owner_call(1, ARBOWNER, enable, T0), 1));
+
+    // Enroll the owner in a block at/after the enable time.
+    let mut add = selector4("addNativeTokenOwner(address)").to_vec();
+    add.extend_from_slice(&word_addr(owner));
+    let i = idx.next();
+    steps.push(msg_step(i, owner_call(2, ARBOWNER, add, ENABLE_TIME + 5), 1));
+
+    // Mint, then a within-balance burn (both authorized happy paths).
+    let mut mint = selector4("mintNativeToken(uint256)").to_vec();
+    mint.extend_from_slice(&word_u256(U256::from(10u128).pow(U256::from(18u64))));
+    let i = idx.next();
+    steps.push(msg_step(i, owner_call(3, ARBNATIVETOKENMANAGER, mint, ENABLE_TIME + 15), 1));
+
+    let mut burn = selector4("burnNativeToken(uint256)").to_vec();
+    burn.extend_from_slice(&word_u256(U256::from(10u128).pow(U256::from(17u64))));
+    let i = idx.next();
+    let burn_ok = owner_call(4, ARBNATIVETOKENMANAGER, burn, ENABLE_TIME + 25);
+    let burn_ok_hash = arb_test_harness::messaging::signed_l2_tx_hash(&burn_ok);
+    steps.push(msg_step(i, burn_ok, 1));
+
+    // Over-burn: amount far exceeds the balance, so the precompile reverts after
+    // the membership read and mint/burn charge.
+    let mut over = selector4("burnNativeToken(uint256)").to_vec();
+    over.extend_from_slice(&word_u256(U256::from(10u128).pow(U256::from(30u64))));
+    let i = idx.next();
+    let over_tx = owner_call(5, ARBNATIVETOKENMANAGER, over, ENABLE_TIME + 35);
+    let over_hash = arb_test_harness::messaging::signed_l2_tx_hash(&over_tx);
+    steps.push(msg_step(i, over_tx, 1));
+
+    let scenario = Scenario {
+        name: "native_token_mint_burn".into(),
+        description: "mint/burn parity incl. over-burn revert".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let raw = rig.dual.run(&scenario).expect("dual run");
+    let report = filter_genesis_noise(raw);
+    assert!(
+        report.is_clean(),
+        "native-token mint/burn diverged from Nitro: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    // Sensitivity: the owner must actually be enrolled (else mint/burn take the
+    // unauthorized burn-out path and the comparison is meaningless), the
+    // within-balance burn must succeed, and the over-burn must revert with a
+    // small gas charge (the soft revert), not consume the whole 2M limit.
+    let is_owner = rig
+        .dual
+        .right
+        .eth_call(
+            TxRequest {
+                from: Some(owner),
+                to: Some(ARBOWNERPUBLIC),
+                data: Some(Bytes::from(
+                    [selector4("isNativeTokenOwner(address)").as_slice(), &word_addr(owner)].concat(),
+                )),
+                value: Some(U256::ZERO),
+                gas: Some(3_000_000),
+            },
+            BlockId::Latest,
+        )
+        .ok()
+        .map(|b| U256::from_be_slice(&b) == U256::from(1u64))
+        .unwrap_or(false);
+    assert!(is_owner, "owner was not enrolled as a native-token owner");
+
+    let ok_r = rig.dual.right.receipt(burn_ok_hash.expect("burn hash")).expect("burn receipt");
+    assert_eq!(ok_r.status, 1, "within-balance burn did not succeed");
+    let over_r = rig.dual.right.receipt(over_hash.expect("over hash")).expect("over receipt");
+    eprintln!("[native] burn_ok_gas={} over_burn_gas={}", ok_r.gas_used, over_r.gas_used);
+    assert_eq!(over_r.status, 0, "over-burn did not revert");
+    // The soft revert (membership read + mint/burn charge, then the balance
+    // check fails before the event) costs strictly less than the full
+    // successful burn. A burn-out would instead consume the whole gas limit,
+    // far exceeding the successful burn — so this bounds out that path.
+    assert!(
+        over_r.gas_used < ok_r.gas_used,
+        "over-burn ({}) did not cost less than the successful burn ({}) — \
+         it took the burn-out path, not the soft revert",
+        over_r.gas_used,
+        ok_r.gas_used,
+    );
+}
+
 /// Decode an ABI `uint256[]` return (offset, length, then words).
 fn decode_uint256_array(b: &[u8]) -> Vec<U256> {
     if b.len() < 64 {
