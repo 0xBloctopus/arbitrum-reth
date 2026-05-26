@@ -3,5 +3,7 @@
 //! L2 pricing backlogs (and hence the base fee) match.
 
 pub mod classify;
+pub mod intrinsic;
 
 pub use classify::{classify, OpKind};
+pub use intrinsic::{intrinsic_multigas, IntrinsicInput};
