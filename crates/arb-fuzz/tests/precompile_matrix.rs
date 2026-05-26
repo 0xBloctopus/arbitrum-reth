@@ -414,6 +414,7 @@ fn matrix() {
                 continue;
             }
         };
+        let tx_hash = arb_test_harness::messaging::signed_l2_tx_hash(&tx_msg);
 
         let scenario = Scenario {
             name: format!("precompile_{label}"),
@@ -445,10 +446,27 @@ fn matrix() {
             }
         };
 
+        let mut diverged = false;
+
+        // No-op guard: equal gas is only meaningful if both nodes actually ran
+        // the call, so a missing receipt (gas 0) is a failure, not a match.
+        if let Some(hash) = tx_hash {
+            let lg = nodes.left.receipt(hash).map(|r| r.gas_used).unwrap_or(0);
+            let rg = nodes.right.receipt(hash).map(|r| r.gas_used).unwrap_or(0);
+            if lg == 0 || rg == 0 {
+                failures.push(format!(
+                    "{label}: tx {hash:#x} did not execute (left gas {lg}, right gas {rg})"
+                ));
+                diverged = true;
+            }
+        } else {
+            failures.push(format!("{label}: could not derive tx hash for no-op guard"));
+            diverged = true;
+        }
+
         // Block-level: receipts_root / gasUsed / tx_count are the strongest
         // signals here (state_root differs due to nonce / balance changes but
         // both nodes track the same updates, so it should still match).
-        let mut diverged = false;
         for d in &report.block_diffs {
             // Skip pure-noise fields when both nodes use the same chain config.
             // We want gas + receipts to match.
