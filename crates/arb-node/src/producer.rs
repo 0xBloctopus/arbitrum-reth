@@ -637,16 +637,25 @@ where
             extra_data: exec_extra.into(),
         };
 
-        // Create the block executor via the factory.
+        // Create the block executor via the factory. A multi-gas inspector is
+        // installed so the v60 multi-dimensional pricing backlog is driven by
+        // per-opcode resource attribution; it publishes each tx's multi-gas to
+        // the shared sink the executor reads.
+        let multi_gas_sink = arb_evm::multi_gas::MultiGasSink::default();
         let evm = self
             .evm_config
             .block_executor_factory()
             .evm_factory()
-            .create_evm(&mut db, evm_env.clone());
+            .create_evm_with_inspector(
+                &mut db,
+                evm_env.clone(),
+                arb_evm::multi_gas::MultiGasInspector::with_sink(multi_gas_sink.clone()),
+            );
         let mut executor = self
             .evm_config
             .block_executor_factory()
             .create_arb_executor(evm, exec_ctx, chain_id);
+        executor.set_multi_gas_sink(multi_gas_sink);
         executor.arb_ctx.l2_block_number = l2_block_number;
         executor.arb_ctx.l1_block_number = block_l1_block_number;
 

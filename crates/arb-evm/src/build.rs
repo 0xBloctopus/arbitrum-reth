@@ -171,6 +171,7 @@ impl<R, Spec, EvmF> ArbBlockExecutorFactory<R, Spec, EvmF> {
             touched_accounts: rustc_hash::FxHashSet::default(),
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
+            multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
         }
     }
 }
@@ -239,6 +240,7 @@ where
             touched_accounts: rustc_hash::FxHashSet::default(),
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
+            multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
         }
     }
 }
@@ -332,6 +334,10 @@ pub struct ArbBlockExecutor<'a, Evm, Spec, R: ReceiptBuilder> {
     /// start of each tx and drained into the state's transition set when the
     /// tx commits.
     state_overlay: StateOverlay,
+    /// Shared slot the EVM's multi-gas inspector publishes each transaction's
+    /// per-dimension gas to. Empty unless a [`MultiGasInspector`] is installed,
+    /// in which case it drives the v60 multi-gas backlog.
+    multi_gas_sink: crate::multi_gas::MultiGasSink,
 }
 
 impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
@@ -345,6 +351,12 @@ impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
     pub fn with_arb_ctx(mut self, ctx: ArbBlockExecutionCtx) -> Self {
         self.arb_ctx = ctx;
         self
+    }
+
+    /// Install the shared slot the EVM's multi-gas inspector publishes to. Must
+    /// be the same slot held by the [`MultiGasInspector`] installed on `evm`.
+    pub fn set_multi_gas_sink(&mut self, sink: crate::multi_gas::MultiGasSink) {
+        self.multi_gas_sink = sink;
     }
 
     /// Returns the set of zombie account addresses.
@@ -2185,8 +2197,16 @@ where
             U256::ZERO
         };
 
-        let charged_multi_gas = MultiGas::single_dim_gas(poster_gas)
-            .saturating_add(MultiGas::computation_gas(evm_gas_used));
+        // The multi-gas inspector (when installed) publishes the per-dimension
+        // execution gas for this tx; without one, fall back to lumping it into
+        // computation. Poster gas is not an opcode, so it is added separately.
+        let execution_multi_gas = self
+            .multi_gas_sink
+            .lock()
+            .take()
+            .unwrap_or_else(|| MultiGas::computation_gas(evm_gas_used));
+        let charged_multi_gas =
+            MultiGas::single_dim_gas(poster_gas).saturating_add(execution_multi_gas);
 
         // Capture effective tip per gas (gas_price - base_fee, clamped >= 0).
         // The effective tip per gas captured before EVM execution. Used by
