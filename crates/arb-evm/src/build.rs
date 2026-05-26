@@ -909,7 +909,7 @@ where
             poster_gas: 0,
             evm_gas_used: gas_used,
             charged_multi_gas: if fees.can_pay_for_gas {
-                MultiGas::l2_calldata_gas(user_gas)
+                MultiGas::single_dim_gas(user_gas)
             } else {
                 MultiGas::default()
             },
