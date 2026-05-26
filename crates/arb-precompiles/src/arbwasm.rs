@@ -549,11 +549,12 @@ fn handle_activate_program(
     let wasm = match wasm_result {
         Ok(w) => w,
         Err(_) => {
-            return revert_sol_error(
-                &mut gas_used,
-                IArbWasm::ProgramNotWasm {}.abi_encode(),
-                input.gas,
-            )
+            // Reconstruction and decompression failures surface as non-solidity
+            // errors, which revert with empty data and no result-copy charge.
+            return Ok(PrecompileOutput::new_reverted(
+                gas_used.min(input.gas),
+                Default::default(),
+            ));
         }
     };
 

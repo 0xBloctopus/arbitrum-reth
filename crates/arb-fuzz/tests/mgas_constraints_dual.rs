@@ -751,3 +751,127 @@ fn stylus_root_activation_matches_nitro() {
     assert!(gas > 100_000, "root activation did not execute (gas {gas})");
     assert!(cgas > 21_000, "call did not dispatch to the Stylus program (gas {cgas})");
 }
+
+/// A root whose declared decompressed length does not match what its fragments
+/// actually decompress to must be rejected at activation, byte-for-byte with
+/// Nitro — the activation reverts on both nodes rather than producing an
+/// activated program on one and a revert on the other.
+#[test]
+#[ignore]
+fn stylus_root_length_mismatch_reverts_on_both() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(21u64)),
+        l1_block_number: 1,
+        timestamp: 1_700_000_000,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    let mut set_price = selector4("setL1PricePerUnit(uint256)").to_vec();
+    set_price.extend_from_slice(&word(0));
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), set_price, 2_000_000, 0).build().expect("set price"),
+        1,
+    ));
+
+    let classic = alloy_primitives::hex::decode(ERC1155_STYLUS.trim()).expect("hex");
+    let dict = classic[3];
+    let compressed = &classic[4..];
+    let decompressed_len = arb_stylus::decompress_wasm(&classic).expect("decompress").len() as u32;
+
+    let mut fragment = vec![0xEFu8, 0xF0, 0x01];
+    fragment.extend_from_slice(compressed);
+    let frag_addr = create_address(owner, 1);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(1, None, wrap_init_code(&fragment), 500_000_000, 0).build().expect("deploy fragment"),
+        1,
+    ));
+
+    // Root declares a decompressed length one byte longer than the fragment
+    // actually yields, so reconstruction must reject it.
+    let mut root = vec![0xEFu8, 0xF0, 0x02, dict];
+    root.extend_from_slice(&(decompressed_len + 1).to_be_bytes());
+    root.extend_from_slice(frag_addr.as_slice());
+    let root_addr = create_address(owner, 2);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(2, None, wrap_init_code(&root), 100_000_000, 0).build().expect("deploy root"),
+        1,
+    ));
+
+    let mut act = selector4("activateProgram(address)").to_vec();
+    let mut arg = [0u8; 32];
+    arg[12..].copy_from_slice(root_addr.as_slice());
+    act.extend_from_slice(&arg);
+    let activate = SignedL2TxBuilder {
+        chain_id: L2_CHAIN_ID,
+        nonce: 3,
+        to: Some(ARBWASM),
+        value: U256::from(10u128).pow(U256::from(18u64)),
+        data: Bytes::from(act),
+        gas_limit: 200_000_000,
+        gas_price: 1_000_000_000,
+        max_fee_per_gas: 1_000_000_000,
+        max_priority_fee_per_gas: 0,
+        access_list: Vec::new(),
+        authorization_list: Vec::new(),
+        kind: L2TxKind::Eip1559,
+        signing_key: owner_key(),
+        l1_block_number: 1,
+        timestamp: 1_700_000_010,
+        request_id: None,
+        sender: SEQUENCER_ALIAS,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("activate");
+    let act_idx = idx.next();
+    let act_hash = arb_test_harness::messaging::signed_l2_tx_hash(&activate);
+    steps.push(msg_step(act_idx, activate, 1));
+
+    let scenario = Scenario {
+        name: "stylus_root_length_mismatch".into(),
+        description: "mismatched root length reverts identically on both nodes".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let raw = rig.dual.run(&scenario).expect("dual run");
+    let report = filter_genesis_noise(raw);
+    assert!(
+        report.is_clean(),
+        "mismatched root activation diverged from Nitro: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    // The bad root must deploy (deploy-time only checks the prefix) and the
+    // activation must revert — proving both nodes reject the mismatch rather
+    // than one activating it.
+    let root_deployed = rig.dual.right.code(root_addr, BlockId::Latest).map_or(false, |c| !c.is_empty());
+    assert!(root_deployed, "bad root did not deploy");
+    let r = rig.dual.right.receipt(act_hash.expect("activate hash")).expect("activate receipt");
+    eprintln!("[mismatch] activation status={} gas={}", r.status, r.gas_used);
+    assert_eq!(r.status, 0, "activation of a length-mismatched root must revert");
+}
