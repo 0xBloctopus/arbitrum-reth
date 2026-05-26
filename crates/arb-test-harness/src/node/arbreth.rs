@@ -112,6 +112,9 @@ impl ArbrethProcess {
             .arg("--disable-discovery")
             .arg("--port=0")
             .arg("--db.exclusive=true")
+            // Tests use HTTP only; disabling IPC avoids the fixed /tmp/reth.ipc
+            // socket colliding when instances run concurrently.
+            .arg("--ipcdisable")
             .stdout(Stdio::from(stdout_file))
             .stderr(Stdio::from(stderr_file))
             .spawn()
