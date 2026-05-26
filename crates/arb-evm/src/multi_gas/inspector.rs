@@ -10,6 +10,7 @@
 use alloy_evm::{eth::EthEvmContext, Database};
 use alloy_primitives::{Address, B256, U256};
 use arb_primitives::multigas::MultiGas;
+use parking_lot::Mutex;
 use revm::{
     bytecode::opcode,
     interpreter::{
@@ -19,8 +20,13 @@ use revm::{
     },
     Inspector,
 };
+use std::sync::Arc;
 
 use crate::multi_gas::classify::{classify, OpKind};
+
+/// Shared slot a [`MultiGasInspector`] writes each transaction's multi-gas to,
+/// read by the block executor after execution.
+pub type MultiGasSink = Arc<Mutex<Option<MultiGas>>>;
 
 const WARM: u64 = 100; // WarmStorageReadCostEIP2929
 const CALL_STIPEND: u64 = 2_300; // CallStipend
@@ -32,6 +38,7 @@ pub struct MultiGasInspector {
     prev_gas: u64,
     pending: Pending,
     accumulated: MultiGas,
+    sink: Option<MultiGasSink>,
 }
 
 #[derive(Debug, Default)]
@@ -77,12 +84,32 @@ enum Pending {
 }
 
 impl MultiGasInspector {
+    /// Creates an inspector that publishes each transaction's multi-gas to a
+    /// shared sink when the top-level frame returns.
+    pub fn with_sink(sink: MultiGasSink) -> Self {
+        Self {
+            sink: Some(sink),
+            ..Default::default()
+        }
+    }
+
     /// Returns the accumulated multi-gas and resets for the next transaction.
     pub fn take_multi_gas(&mut self) -> MultiGas {
         self.flush_dangling_frame();
         self.pending = Pending::None;
         self.prev_gas = 0;
         core::mem::replace(&mut self.accumulated, MultiGas::zero())
+    }
+
+    /// Publishes the accumulated multi-gas to the sink and resets, called when
+    /// the outermost frame returns (depth zero).
+    fn publish(&mut self) {
+        if self.sink.is_some() {
+            let gas = self.take_multi_gas();
+            if let Some(sink) = &self.sink {
+                *sink.lock() = Some(gas);
+            }
+        }
     }
 
     fn add(&mut self, gas: MultiGas) {
@@ -259,6 +286,17 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
         None
     }
 
+    fn call_end(
+        &mut self,
+        ctx: &mut EthEvmContext<DB>,
+        _inputs: &CallInputs,
+        _outcome: &mut CallOutcome,
+    ) {
+        if ctx.journaled_state.inner.depth == 0 {
+            self.publish();
+        }
+    }
+
     fn create(
         &mut self,
         _ctx: &mut EthEvmContext<DB>,
@@ -279,13 +317,16 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
 
     fn create_end(
         &mut self,
-        _ctx: &mut EthEvmContext<DB>,
+        ctx: &mut EthEvmContext<DB>,
         _inputs: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
         if outcome.result.is_ok() {
             let deposit = (outcome.result.output.len() as u64).saturating_mul(CREATE_DATA_GAS);
             self.add(MultiGas::storage_growth_gas(deposit));
+        }
+        if ctx.journaled_state.inner.depth == 0 {
+            self.publish();
         }
     }
 }

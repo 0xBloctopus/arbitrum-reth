@@ -171,6 +171,7 @@ impl<R, Spec, EvmF> ArbBlockExecutorFactory<R, Spec, EvmF> {
             touched_accounts: rustc_hash::FxHashSet::default(),
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
+            multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
         }
     }
 }
@@ -239,6 +240,7 @@ where
             touched_accounts: rustc_hash::FxHashSet::default(),
             multi_gas_current_fees: std::sync::OnceLock::new(),
             state_overlay: StateOverlay::new(),
+            multi_gas_sink: crate::multi_gas::MultiGasSink::default(),
         }
     }
 }
@@ -332,6 +334,10 @@ pub struct ArbBlockExecutor<'a, Evm, Spec, R: ReceiptBuilder> {
     /// start of each tx and drained into the state's transition set when the
     /// tx commits.
     state_overlay: StateOverlay,
+    /// Shared slot the EVM's multi-gas inspector publishes each transaction's
+    /// per-dimension gas to. Empty unless a [`MultiGasInspector`] is installed,
+    /// in which case it drives the v60 multi-gas backlog.
+    multi_gas_sink: crate::multi_gas::MultiGasSink,
 }
 
 impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
@@ -345,6 +351,12 @@ impl<'a, Evm, Spec, R: ReceiptBuilder> ArbBlockExecutor<'a, Evm, Spec, R> {
     pub fn with_arb_ctx(mut self, ctx: ArbBlockExecutionCtx) -> Self {
         self.arb_ctx = ctx;
         self
+    }
+
+    /// Install the shared slot the EVM's multi-gas inspector publishes to. Must
+    /// be the same slot held by the [`MultiGasInspector`] installed on `evm`.
+    pub fn set_multi_gas_sink(&mut self, sink: crate::multi_gas::MultiGasSink) {
+        self.multi_gas_sink = sink;
     }
 
     /// Returns the set of zombie account addresses.
@@ -1062,6 +1074,10 @@ where
         let tx_gas_limit = recovered.tx().gas_limit();
         let tx_value = recovered.tx().value();
         let envelope_tx_type = recovered.tx().tx_type();
+        let intrinsic_multi_gas = tx_intrinsic_multi_gas(
+            recovered.tx(),
+            arb_chainspec::spec_id_by_arbos_version(self.arb_ctx.arbos_version),
+        );
 
         // Classify the transaction type.
         let arb_tx_type = ArbTxType::from_u8(tx_type_raw).ok();
@@ -2185,8 +2201,23 @@ where
             U256::ZERO
         };
 
-        let charged_multi_gas = MultiGas::single_dim_gas(poster_gas)
-            .saturating_add(MultiGas::computation_gas(evm_gas_used));
+        // The multi-gas inspector (when installed) publishes the per-opcode
+        // execution gas; the intrinsic is charged before the first opcode and
+        // added here. Gas the inspector cannot observe as opcodes — precompile
+        // execution, which the reference attributes to computation — is folded
+        // into computation as the remainder so the split totals evm_gas_used
+        // exactly. Without an inspector, all execution gas lumps into
+        // computation. Poster gas is added separately.
+        let execution_multi_gas = match self.multi_gas_sink.lock().take() {
+            Some(opcode_gas) => {
+                let observed = intrinsic_multi_gas.saturating_add(opcode_gas);
+                let remainder = evm_gas_used.saturating_sub(observed.single_gas());
+                observed.saturating_add(MultiGas::computation_gas(remainder))
+            }
+            None => MultiGas::computation_gas(evm_gas_used),
+        };
+        let charged_multi_gas =
+            MultiGas::single_dim_gas(poster_gas).saturating_add(execution_multi_gas);
 
         // Capture effective tip per gas (gas_price - base_fee, clamped >= 0).
         // The effective tip per gas captured before EVM execution. Used by
@@ -3128,6 +3159,46 @@ fn estimate_intrinsic_gas(tx: &impl Transaction, spec: revm::primitives::hardfor
     }
 
     gas
+}
+
+/// Per-resource intrinsic gas for a transaction. Its total matches
+/// [`estimate_intrinsic_gas`] plus the EIP-7702 authorization cost; the
+/// inspector never observes it because the intrinsic is charged before the
+/// first opcode runs.
+fn tx_intrinsic_multi_gas(
+    tx: &impl Transaction,
+    spec: revm::primitives::hardfork::SpecId,
+) -> MultiGas {
+    let is_create = tx.to().is_none();
+    let data = tx.input();
+    let zero_bytes = data.iter().filter(|&&b| b == 0).count() as u64;
+    let nonzero_bytes = data.len() as u64 - zero_bytes;
+    let (access_list_addresses, access_list_keys) = tx.access_list().map_or((0, 0), |al| {
+        let mut addrs = 0u64;
+        let mut keys = 0u64;
+        for item in al.iter() {
+            addrs += 1;
+            keys += item.storage_keys.len() as u64;
+        }
+        (addrs, keys)
+    });
+    let init_code_words = if is_create
+        && spec.is_enabled_in(revm::primitives::hardfork::SpecId::SHANGHAI)
+        && !data.is_empty()
+    {
+        (data.len() as u64).div_ceil(32)
+    } else {
+        0
+    };
+    crate::multi_gas::intrinsic_multigas(crate::multi_gas::IntrinsicInput {
+        is_create,
+        zero_bytes,
+        nonzero_bytes,
+        init_code_words,
+        access_list_addresses,
+        access_list_keys,
+        auth_list_len: tx.authorization_list().map_or(0, |l| l.len()) as u64,
+    })
 }
 
 /// Decode delayed_messages_read (bytes 32-39) and L2 block number (bytes 40-47)
