@@ -33,7 +33,7 @@ use revm::database::{BundleState, StateBuilder};
 use revm_database::states::bundle_state::BundleRetention;
 use tracing::{debug, info, warn};
 
-use arb_evm::config::{arbos_version_from_mix_hash, ArbEvmConfig};
+use arb_evm::config::{arbos_version_from_mix_hash, l1_block_number_from_mix_hash, ArbEvmConfig};
 use arb_primitives::{signed_tx::ArbTransactionSigned, tx_types::ArbInternalTx, ArbPrimitives};
 use arb_rpc::block_producer::{
     BlockProducer, BlockProducerError, BlockProductionInput, ProducedBlock,
@@ -82,53 +82,31 @@ fn max_inflight() -> usize {
     })
 }
 
-/// Adaptive flush interval based on observed commit latency and dirty pages.
+/// Fixed-interval flush scheduler with an EMA of commit latency tracked for
+/// observability. The interval is set at construction and does not change.
 pub struct FlushScheduler {
-    target_commit_latency_ms: u64,
-    max_dirty_pages_mb: u64,
-    min_interval: u64,
-    max_interval: u64,
-    current_interval: u64,
+    interval: u64,
     ema_commit_latency_ms: u64,
 }
 
 impl FlushScheduler {
-    pub fn new(initial_interval: u64) -> Self {
-        let min_interval = 32;
-        let max_interval = 256;
-        let current_interval = initial_interval.clamp(min_interval, max_interval);
+    pub fn new(interval: u64) -> Self {
         Self {
-            target_commit_latency_ms: 1000,
-            max_dirty_pages_mb: 200,
-            min_interval,
-            max_interval,
-            current_interval,
+            interval,
             ema_commit_latency_ms: 0,
         }
     }
 
-    pub fn should_flush(&self, since_last: u64, dirty_mb: Option<u64>) -> bool {
-        if let Some(mb) = dirty_mb {
-            if mb > self.max_dirty_pages_mb {
-                return true;
-            }
-        }
-        since_last >= self.current_interval
+    pub fn should_flush(&self, since_last: u64) -> bool {
+        since_last >= self.interval
     }
 
     pub fn observe(&mut self, commit_latency_ms: u64) {
         self.ema_commit_latency_ms = (self.ema_commit_latency_ms * 7 + commit_latency_ms * 3) / 10;
-        self.current_interval = if self.ema_commit_latency_ms > self.target_commit_latency_ms {
-            (self.current_interval / 2).max(self.min_interval)
-        } else if self.ema_commit_latency_ms < self.target_commit_latency_ms / 2 {
-            (self.current_interval * 2).min(self.max_interval)
-        } else {
-            self.current_interval
-        };
     }
 
     pub fn current_interval(&self) -> u64 {
-        self.current_interval
+        self.interval
     }
 }
 
@@ -450,13 +428,12 @@ where
         );
     }
 
-    async fn produce_block_with_execution(
+    fn produce_block_with_execution(
         &self,
         input: &BlockProductionInput,
         parsed_txs: Vec<ParsedTransaction>,
     ) -> Result<ProducedBlock, BlockProducerError> {
         self.drain_completed_flush();
-        self.apply_backpressure().await;
 
         let head_num = self.head_block_number()?;
         let l2_block_number = head_num + 1;
@@ -468,8 +445,10 @@ where
         let parent_mix_hash = parent_header.mix_hash().unwrap_or_default();
         let parent_arbos_version = arbos_version_from_mix_hash(&parent_mix_hash);
 
-        // Build the EVM environment for this block.
+        // The StartBlock tx carries the reported value verbatim; the EVM sees
+        // the monotonic one.
         let l1_block_number = input.l1_block_number;
+        let block_l1_block_number = monotonic_l1_block_number(l1_block_number, &parent_mix_hash);
         let arbos_version = parent_arbos_version; // May upgrade during StartBlock
 
         // Construct a provisional mix_hash for the EVM environment.
@@ -478,7 +457,8 @@ where
             buf.copy_from_slice(&parent_mix_hash.0[0..8]);
             u64::from_be_bytes(buf)
         };
-        let provisional_mix_hash = compute_mix_hash(send_count, l1_block_number, arbos_version);
+        let provisional_mix_hash =
+            compute_mix_hash(send_count, block_l1_block_number, arbos_version);
 
         // Open state at parent block via block hash.
         let raw_state_provider = self
@@ -668,15 +648,24 @@ where
             .block_executor_factory()
             .create_arb_executor(evm, exec_ctx, chain_id);
         executor.arb_ctx.l2_block_number = l2_block_number;
-        executor.arb_ctx.l1_block_number = l1_block_number;
+        executor.arb_ctx.l1_block_number = block_l1_block_number;
 
-        // Collect ancestor L2 hashes before apply_pre_execution_changes constructs
-        // the per-block context, since we need provider lookups outside the executor.
+        // 256-ancestor populate only fires on a cold cache.
         let l2_hash_entries = {
-            let mut entries = Vec::with_capacity(256);
+            let mut entries = Vec::new();
             let parent_num = l2_block_number.saturating_sub(1);
             entries.push((parent_num, parent_header.hash()));
-            if parent_num > 1 {
+            let cache_cold = parent_num > 1
+                && self
+                    .evm_config
+                    .executor_factory
+                    .arb_evm_factory()
+                    .chain_caches()
+                    .l2_block_hashes
+                    .lock()
+                    .get(&parent_num.saturating_sub(1))
+                    .is_none();
+            if cache_cold {
                 let mut hash = parent_header.parent_hash();
                 for i in 2..=256u64 {
                     let Some(n) = l2_block_number.checked_sub(i) else {
@@ -1148,10 +1137,8 @@ where
 
         self.head_block_num.store(l2_block_number, Ordering::SeqCst);
 
-        // Start async flush when scheduler signals threshold or dirty cap (non-blocking).
         let since_flush = self.blocks_since_flush.fetch_add(1, Ordering::SeqCst) + 1;
-        let dirty_mb = read_dirty_pages_mb();
-        let should_flush = self.scheduler.lock().should_flush(since_flush, dirty_mb);
+        let should_flush = self.scheduler.lock().should_flush(since_flush);
         if should_flush && !self.pending_flush.load(Ordering::SeqCst) {
             self.start_async_flush();
         }
@@ -1283,7 +1270,8 @@ where
             "Parsed L1 message"
         );
 
-        self.produce_block_with_execution(&input, parsed_txs).await
+        self.apply_backpressure().await;
+        self.produce_block_with_execution(&input, parsed_txs)
     }
 
     async fn reset_to_block(&self, target_block_number: u64) -> Result<(), BlockProducerError> {
@@ -1472,6 +1460,12 @@ fn compute_mix_hash(send_count: u64, l1_block_number: u64, arbos_version: u64) -
     arbos::header::compute_arbos_mixhash(send_count, l1_block_number, arbos_version, false)
 }
 
+/// L1 block number for the `NUMBER` opcode: monotonic, so a reported value
+/// below the parent's (recovered from its mix_hash) is clamped up to it.
+fn monotonic_l1_block_number(reported: u64, parent_mix_hash: &B256) -> u64 {
+    reported.max(l1_block_number_from_mix_hash(parent_mix_hash))
+}
+
 /// EIP-161: mark empty non-zombie accounts for trie deletion.
 fn delete_empty_accounts(
     bundle: &mut BundleState,
@@ -1639,5 +1633,22 @@ fn augment_bundle_from_cache(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arbos::header::compute_arbos_mixhash;
+
+    #[test]
+    fn l1_block_number_clamps_to_parent() {
+        let parent = compute_arbos_mixhash(0, 10_538_022, 51, false);
+        // A lower sequencer-reported value is clamped up to the parent's.
+        assert_eq!(monotonic_l1_block_number(10_537_967, &parent), 10_538_022);
+        // A higher value advances normally.
+        assert_eq!(monotonic_l1_block_number(10_538_099, &parent), 10_538_099);
+        // Equal stays put.
+        assert_eq!(monotonic_l1_block_number(10_538_022, &parent), 10_538_022);
     }
 }

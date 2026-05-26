@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use alloy_primitives::{Address, Log, B256, U256};
+use arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS_LAST_CODE_CACHE_FIX;
 use revm::Database;
 
 use crate::{
@@ -18,9 +19,6 @@ const WARM_ACCOUNT_ACCESS_COST: u64 = 100;
 /// Matches Go: `cfg.MaxCodeSize() / params.DefaultMaxCodeSize * params.ExtcodeSizeGasEIP150`
 /// = 24576 / 24576 * 700 = 700.
 const WASM_EXT_CODE_COST: u64 = 700;
-
-/// ArbOS version from which only non-empty `account_code` results are cached.
-const ARBOS_VERSION_STYLUS_LAST_CODE_CACHE_FIX: u64 = 40;
 
 // ── Type-erased journal access ──────────────────────────────────────
 
@@ -299,7 +297,7 @@ pub struct StylusEvmApi {
     precompile_ctx_ptr: *const (),
     do_call: Option<DoCallFn>,
     do_create: Option<DoCreateFn>,
-    /// Last `account_code` result; a repeat read of the same address is free.
+    /// Most recent `account_code` result; a same-address repeat read is free.
     last_code: Option<(Address, Vec<u8>)>,
 }
 
@@ -913,7 +911,6 @@ impl EvmApi for StylusEvmApi {
         address: Address,
         gas_left: Gas,
     ) -> eyre::Result<(Vec<u8>, Gas)> {
-        // A repeat read of the most recently read address is free.
         if let Some((stored, data)) = self.last_code.as_ref() {
             if *stored == address {
                 return Ok((data.clone(), Gas(0)));

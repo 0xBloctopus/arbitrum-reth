@@ -1,12 +1,17 @@
 //! Per-block and per-tx context threaded into Arbitrum precompile handlers.
 
 use alloy_primitives::{Address, B256, U256};
+use arb_storage::{Detached, SystemStateBackend};
+use arbos::{
+    arbos_state::{arbos_from_input_system, ArbosState, ArbosStateError},
+    burn::SystemBurner,
+};
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicU64, AtomicUsize},
-        Arc,
+        Arc, OnceLock,
     },
 };
 
@@ -46,8 +51,14 @@ impl RecentWasms {
     }
 }
 
-/// Per-block parameters populated once at block start.
+/// Caches shared across blocks via an `Arc` clone into each [`BlockCtx`].
 #[derive(Debug, Default)]
+pub struct ChainCaches {
+    pub l1_block_numbers: Mutex<HashMap<u64, u64>>,
+    pub l2_block_hashes: Mutex<HashMap<u64, B256>>,
+}
+
+/// Per-block parameters populated once at block start.
 pub struct BlockCtx {
     pub arbos_version: u64,
     pub block_timestamp: u64,
@@ -58,11 +69,32 @@ pub struct BlockCtx {
     pub allow_debug_precompiles: bool,
     /// Live counter mutated by the executor between transactions in the same block.
     pub current_gas_backlog: AtomicU64,
-    /// L2 block number -> L1 block number recorded at that L2 height.
-    pub l1_block_cache: Mutex<HashMap<u64, u64>>,
-    /// L2 block number -> L2 block hash, populated for `arbBlockHash` lookups.
-    pub l2_blockhash_cache: Mutex<HashMap<u64, B256>>,
+    pub chain_caches: Arc<ChainCaches>,
     pub recent_wasms: Mutex<RecentWasms>,
+    /// Per-block descriptor cache for the detached [`ArbosState`].
+    arbos_state: OnceLock<Result<ArbosState<'static, Detached, SystemBurner>, ArbosStateError>>,
+}
+
+impl Default for BlockCtx {
+    fn default() -> Self {
+        Self::new_with_caches(0, 0, 0, 0, false, Arc::new(ChainCaches::default()))
+    }
+}
+
+impl std::fmt::Debug for BlockCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BlockCtx")
+            .field("arbos_version", &self.arbos_version)
+            .field("block_timestamp", &self.block_timestamp)
+            .field("l1_block_number_for_evm", &self.l1_block_number_for_evm)
+            .field("l2_block_number", &self.l2_block_number)
+            .field("allow_debug_precompiles", &self.allow_debug_precompiles)
+            .field("current_gas_backlog", &self.current_gas_backlog)
+            .field("chain_caches", &self.chain_caches)
+            .field("recent_wasms", &self.recent_wasms)
+            .field("arbos_state_cached", &self.arbos_state.get().is_some())
+            .finish()
+    }
 }
 
 impl BlockCtx {
@@ -73,6 +105,24 @@ impl BlockCtx {
         l2_block_number: u64,
         allow_debug_precompiles: bool,
     ) -> Self {
+        Self::new_with_caches(
+            arbos_version,
+            block_timestamp,
+            l1_block_number_for_evm,
+            l2_block_number,
+            allow_debug_precompiles,
+            Arc::new(ChainCaches::default()),
+        )
+    }
+
+    pub fn new_with_caches(
+        arbos_version: u64,
+        block_timestamp: u64,
+        l1_block_number_for_evm: u64,
+        l2_block_number: u64,
+        allow_debug_precompiles: bool,
+        chain_caches: Arc<ChainCaches>,
+    ) -> Self {
         Self {
             arbos_version,
             block_timestamp,
@@ -80,10 +130,24 @@ impl BlockCtx {
             l2_block_number,
             allow_debug_precompiles,
             current_gas_backlog: AtomicU64::new(0),
-            l1_block_cache: Mutex::new(HashMap::new()),
-            l2_blockhash_cache: Mutex::new(HashMap::new()),
+            chain_caches,
             recent_wasms: Mutex::new(RecentWasms::default()),
+            arbos_state: OnceLock::new(),
         }
+    }
+
+    /// Borrow the cached [`ArbosState`], constructing it on first call via
+    /// [`arbos_from_input_system`]. Returns a clone of the cached error if
+    /// the first call failed; the cache is not cleared on error since the
+    /// version slot does not change within a single block.
+    pub fn arbos_state<S: SystemStateBackend>(
+        &self,
+        backend: &mut S,
+    ) -> Result<&ArbosState<'static, Detached, SystemBurner>, ArbosStateError> {
+        self.arbos_state
+            .get_or_init(|| arbos_from_input_system(backend, SystemBurner::new(None, false)))
+            .as_ref()
+            .map_err(Clone::clone)
     }
 
     pub fn current_gas_backlog(&self) -> u64 {
@@ -99,7 +163,7 @@ impl BlockCtx {
     /// Insert an L1 block number into the cache, retaining a rolling window
     /// of recent L2 heights.
     pub fn cache_l1_block_number(&self, l2_block: u64, l1_block: u64) {
-        let mut map = self.l1_block_cache.lock();
+        let mut map = self.chain_caches.l1_block_numbers.lock();
         map.insert(l2_block, l1_block);
         if l2_block > 100 {
             map.retain(|&k, _| k >= l2_block - 100);
@@ -107,15 +171,28 @@ impl BlockCtx {
     }
 
     pub fn cached_l1_block_number(&self, l2_block: u64) -> Option<u64> {
-        self.l1_block_cache.lock().get(&l2_block).copied()
+        self.chain_caches
+            .l1_block_numbers
+            .lock()
+            .get(&l2_block)
+            .copied()
     }
 
     pub fn cache_l2_block_hash(&self, l2_block: u64, hash: B256) {
-        self.l2_blockhash_cache.lock().insert(l2_block, hash);
+        let mut map = self.chain_caches.l2_block_hashes.lock();
+        map.insert(l2_block, hash);
+        // Bound to the arbBlockHash validity window (`requested + 256 >= current`).
+        if l2_block > 256 {
+            map.retain(|&k, _| k >= l2_block - 256);
+        }
     }
 
     pub fn cached_l2_block_hash(&self, l2_block: u64) -> Option<B256> {
-        self.l2_blockhash_cache.lock().get(&l2_block).copied()
+        self.chain_caches
+            .l2_block_hashes
+            .lock()
+            .get(&l2_block)
+            .copied()
     }
 
     pub fn reset_recent_wasms(&self, capacity: usize) {
@@ -311,5 +388,51 @@ impl ArbPrecompileCtx {
                 tx.stylus_program_counts.remove(&addr);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ctx_sharing(caches: &Arc<ChainCaches>) -> BlockCtx {
+        BlockCtx::new_with_caches(60, 0, 0, 0, false, caches.clone())
+    }
+
+    #[test]
+    fn chain_caches_share_l2_block_hashes_across_block_ctxs() {
+        let caches = Arc::new(ChainCaches::default());
+        let block_a = ctx_sharing(&caches);
+        let block_b = ctx_sharing(&caches);
+
+        let hash = B256::repeat_byte(0x42);
+        block_a.cache_l2_block_hash(100, hash);
+        assert_eq!(block_b.cached_l2_block_hash(100), Some(hash));
+    }
+
+    #[test]
+    fn cache_l2_block_hash_evicts_entries_outside_window() {
+        let block = BlockCtx::new_with_caches(60, 0, 0, 0, false, Arc::new(ChainCaches::default()));
+        for n in 0..=512u64 {
+            block.cache_l2_block_hash(n, B256::from(U256::from(n)));
+        }
+        assert_eq!(
+            block.cached_l2_block_hash(256),
+            Some(B256::from(U256::from(256)))
+        );
+        assert_eq!(
+            block.cached_l2_block_hash(512),
+            Some(B256::from(U256::from(512)))
+        );
+        assert_eq!(block.cached_l2_block_hash(255), None);
+        assert_eq!(block.cached_l2_block_hash(0), None);
+    }
+
+    #[test]
+    fn block_ctx_new_creates_isolated_caches() {
+        let a = BlockCtx::new(60, 0, 0, 0, false);
+        let b = BlockCtx::new(60, 0, 0, 0, false);
+        a.cache_l2_block_hash(1, B256::repeat_byte(0x01));
+        assert!(b.cached_l2_block_hash(1).is_none());
     }
 }

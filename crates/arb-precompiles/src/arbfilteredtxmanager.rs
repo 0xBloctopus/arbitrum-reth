@@ -3,7 +3,7 @@ use alloy_primitives::{Address, Log, B256, U256};
 use alloy_sol_types::{SolEvent, SolInterface};
 use arb_context::ArbPrecompileCtx;
 use arb_storage::{ARBOS_STATE_ADDRESS, FILTERED_TX_STATE_ADDRESS};
-use arbos::{arbos_state::arbos_from_input, burn::SystemBurner};
+
 use revm::precompile::{PrecompileError, PrecompileId, PrecompileOutput, PrecompileResult};
 use std::sync::Arc;
 
@@ -46,7 +46,9 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     load_accounts(&mut input)?;
     let is_filterer = {
         let internals = input.internals_mut();
-        let arb_state = arbos_from_input(internals, SystemBurner::new(None, false))
+        let arb_state = ctx
+            .block
+            .arbos_state(internals)
             .map_err(ArbPrecompileError::fatal)?;
         let res = arb_state
             .transaction_filterers
@@ -72,13 +74,13 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     use IArbFilteredTxManager::ArbFilteredTransactionsManagerCalls as Calls;
     let inner_result = match call {
         Calls::addFilteredTransaction(c) => {
-            handle_add_filtered_tx(&mut input, &mut gas_used, c.txHash)
+            handle_add_filtered_tx(&mut input, &mut gas_used, c.txHash, ctx)
         }
         Calls::deleteFilteredTransaction(c) => {
-            handle_delete_filtered_tx(&mut input, &mut gas_used, c.txHash)
+            handle_delete_filtered_tx(&mut input, &mut gas_used, c.txHash, ctx)
         }
         Calls::isTransactionFiltered(c) => {
-            handle_is_tx_filtered(&mut input, &mut gas_used, c.txHash)
+            handle_is_tx_filtered(&mut input, &mut gas_used, c.txHash, ctx)
         }
     };
 
@@ -121,9 +123,12 @@ fn is_transaction_filterer(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     addr: Address,
+    ctx: &ArbPrecompileCtx,
 ) -> Result<bool, ArbPrecompileError> {
     let internals = input.internals_mut();
-    let arb_state = arbos_from_input(internals, SystemBurner::new(None, false))
+    let arb_state = ctx
+        .block
+        .arbos_state(internals)
         .map_err(ArbPrecompileError::fatal)?;
     let is_member = arb_state
         .transaction_filterers
@@ -137,12 +142,15 @@ fn handle_is_tx_filtered(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     tx_hash: B256,
+    ctx: &ArbPrecompileCtx,
 ) -> PrecompileResult {
     let gas_limit = input.gas;
     load_accounts(input)?;
 
     let internals = input.internals_mut();
-    let arb_state = arbos_from_input(internals, SystemBurner::new(None, false))
+    let arb_state = ctx
+        .block
+        .arbos_state(internals)
         .map_err(ArbPrecompileError::fatal)?;
     let is_filtered_bool = arb_state
         .filtered_transactions
@@ -167,18 +175,21 @@ fn handle_add_filtered_tx(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     tx_hash: B256,
+    ctx: &ArbPrecompileCtx,
 ) -> PrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
     load_accounts(input)?;
 
-    if !is_transaction_filterer(input, gas_used, caller)? {
+    if !is_transaction_filterer(input, gas_used, caller, ctx)? {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
 
     {
         let internals = input.internals_mut();
-        let arb_state = arbos_from_input(internals, SystemBurner::new(None, false))
+        let arb_state = ctx
+            .block
+            .arbos_state(internals)
             .map_err(ArbPrecompileError::fatal)?;
         arb_state
             .filtered_transactions
@@ -206,18 +217,21 @@ fn handle_delete_filtered_tx(
     input: &mut PrecompileInput<'_>,
     gas_used: &mut u64,
     tx_hash: B256,
+    ctx: &ArbPrecompileCtx,
 ) -> PrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
     load_accounts(input)?;
 
-    if !is_transaction_filterer(input, gas_used, caller)? {
+    if !is_transaction_filterer(input, gas_used, caller, ctx)? {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
 
     {
         let internals = input.internals_mut();
-        let arb_state = arbos_from_input(internals, SystemBurner::new(None, false))
+        let arb_state = ctx
+            .block
+            .arbos_state(internals)
             .map_err(ArbPrecompileError::fatal)?;
         arb_state
             .filtered_transactions
