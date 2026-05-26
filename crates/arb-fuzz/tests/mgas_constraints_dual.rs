@@ -14,6 +14,11 @@
 //!     -- --ignored --nocapture
 
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+
+/// Each test spawns its own Nitro + arbreth pair, so they must not run
+/// concurrently (Docker / port / process contention). Serialize them.
+static SERIAL: Mutex<()> = Mutex::new(());
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use arb_fuzz::{arbitrary_impls::interop::wrap_init_code, scaffolding::selector4};
@@ -165,6 +170,16 @@ impl Idx {
 }
 
 fn owner_tx(nonce: u64, to: Option<Address>, data: Vec<u8>, gas: u64) -> SignedL2TxBuilder {
+    owner_tx_l1(nonce, to, data, gas, FUZZ_L1_BASE_FEE)
+}
+
+fn owner_tx_l1(
+    nonce: u64,
+    to: Option<Address>,
+    data: Vec<u8>,
+    gas: u64,
+    base_fee_l1: u64,
+) -> SignedL2TxBuilder {
     SignedL2TxBuilder {
         chain_id: L2_CHAIN_ID,
         nonce,
@@ -183,7 +198,7 @@ fn owner_tx(nonce: u64, to: Option<Address>, data: Vec<u8>, gas: u64) -> SignedL
         timestamp: 1_700_000_000,
         request_id: None,
         sender: SEQUENCER_ALIAS,
-        base_fee_l1: FUZZ_L1_BASE_FEE,
+        base_fee_l1,
     }
 }
 
@@ -198,6 +213,7 @@ fn msg_step(idx: u64, msg: arb_test_harness::messaging::L1Message, dmr: u64) -> 
 #[test]
 #[ignore]
 fn multi_gas_write_constraint_backlog_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
     let owner = derive_address(owner_key());
     let mut rig = Rig::spawn(owner);
     let idx = Idx::new();
@@ -329,4 +345,101 @@ fn decode_uint256_array(b: &[u8]) -> Vec<U256> {
             b.get(s..s + 32).map(U256::from_be_slice)
         })
         .collect()
+}
+
+/// EIP-7623 calldata floor parity. With the calldata-price increase enabled, a
+/// data-heavy / compute-light transaction pays `floorDataGas` rather than its
+/// (lower) execution gas. The receipt gas must match Nitro and equal the floor.
+#[test]
+#[ignore]
+fn eip7623_calldata_floor_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(20u64)),
+        l1_block_number: 1,
+        timestamp: 1_700_000_000,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    // Enable the calldata-price increase (owner-only). base_fee_l1 = 0 on every
+    // message keeps the L1 price ~0 so the floor tx incurs no poster gas to
+    // lift execution above the floor.
+    let mut enable = selector4("setCalldataPriceIncrease(bool)").to_vec();
+    enable.extend_from_slice(&word(1));
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), enable, 2_000_000, 0).build().expect("enable"),
+        1,
+    ));
+
+    // Zero the L1 price so the floor tx pays no poster gas, letting the calldata
+    // floor (rather than the L1 cost) decide gas.
+    let mut set_price = selector4("setL1PricePerUnit(uint256)").to_vec();
+    set_price.extend_from_slice(&word(0));
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(1, Some(ARBOWNER), set_price, 2_000_000, 0).build().expect("set price"),
+        1,
+    ));
+
+    // Floor-binding tx: many zero calldata bytes to an empty account, with no
+    // L1 base fee so there is no poster gas to lift execution above the floor.
+    // intrinsic = 21000 + 1000*4 = 25000; floor = 21000 + 1000*10 = 31000.
+    const ZERO_BYTES: usize = 1000;
+    let eoa = address!("00000000000000000000000000000000deadbeef");
+    let expected_floor = 21_000u64 + (ZERO_BYTES as u64) * 10;
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(2, Some(eoa), vec![0u8; ZERO_BYTES], 2_000_000, 0)
+            .build()
+            .expect("floor tx"),
+        1,
+    ));
+
+    let scenario = Scenario {
+        name: "eip7623_calldata_floor".into(),
+        description: "calldata floor parity with the price increase enabled".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let raw = rig.dual.run(&scenario).expect("dual run");
+    let report = filter_genesis_noise(raw);
+    assert!(
+        report.is_clean(),
+        "calldata floor diverged from Nitro: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    // The floor tx is the latest block's last tx. Its gas must equal the floor,
+    // proving the floor bound (otherwise the test is insensitive).
+    let n = rig.dual.right.block(BlockId::Latest).expect("latest").number;
+    let b = rig.dual.right.block(BlockId::Number(n)).expect("block");
+    let hash = *b.tx_hashes.last().expect("floor tx");
+    let gas = rig.dual.right.receipt(hash).expect("receipt").gas_used;
+    eprintln!("[floor] block={n} floor_tx_gas={gas} expected_floor={expected_floor}");
+    assert_eq!(
+        gas, expected_floor,
+        "floor did not bind: gas_used {gas} != floor {expected_floor}"
+    );
 }

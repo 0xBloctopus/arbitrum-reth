@@ -1078,6 +1078,18 @@ where
             recovered.tx(),
             arb_chainspec::spec_id_by_arbos_version(self.arb_ctx.arbos_version),
         );
+        // EIP-7623 calldata floor, charged only when the increase is enabled
+        // (the flag already encodes the version gate).
+        let calldata_floor_gas = if self
+            .arb_hooks
+            .as_ref()
+            .map(|h| h.is_calldata_pricing_increase_enabled())
+            .unwrap_or(false)
+        {
+            tx_floor_data_gas(recovered.tx())
+        } else {
+            0
+        };
 
         // Classify the transaction type.
         let arb_tx_type = ArbTxType::from_u8(tx_type_raw).ok();
@@ -2216,8 +2228,20 @@ where
             }
             None => MultiGas::computation_gas(evm_gas_used),
         };
-        let charged_multi_gas =
+        let mut charged_multi_gas =
             MultiGas::single_dim_gas(poster_gas).saturating_add(execution_multi_gas);
+
+        // EIP-7623: a data-heavy tx pays the calldata floor. The receipt gas is
+        // raised to the floor and the top-up is priced as L2 calldata, keeping
+        // charged_multi_gas.single_gas() == gas_used (so the v60 refund stays
+        // exact). The sender pays the floor via the existing sender_extra_gas.
+        let gas_before_floor = output.result.result.gas_used();
+        if calldata_floor_gas > gas_before_floor {
+            let top_up = calldata_floor_gas - gas_before_floor;
+            adjust_result_gas_used(&mut output.result.result, top_up);
+            charged_multi_gas =
+                charged_multi_gas.saturating_add(MultiGas::l2_calldata_gas(top_up));
+        }
 
         // Capture effective tip per gas (gas_price - base_fee, clamped >= 0).
         // The effective tip per gas captured before EVM execution. Used by
@@ -3199,6 +3223,22 @@ fn tx_intrinsic_multi_gas(
         access_list_keys,
         auth_list_len: tx.authorization_list().map_or(0, |l| l.len()) as u64,
     })
+}
+
+/// EIP-7623 calldata floor: `TxGas + tokens * floor cost`, where each non-zero
+/// data byte is four tokens and each zero byte one. Applied only when the
+/// calldata-price increase feature is enabled.
+fn tx_floor_data_gas(tx: &impl Transaction) -> u64 {
+    const TX_GAS: u64 = 21_000;
+    const TX_TOKEN_PER_NONZERO_BYTE: u64 = 4;
+    const TX_COST_FLOOR_PER_TOKEN: u64 = 10;
+    let data = tx.input();
+    let zero = data.iter().filter(|&&b| b == 0).count() as u64;
+    let nonzero = (data.len() as u64).saturating_sub(zero);
+    let tokens = nonzero
+        .saturating_mul(TX_TOKEN_PER_NONZERO_BYTE)
+        .saturating_add(zero);
+    TX_GAS.saturating_add(tokens.saturating_mul(TX_COST_FLOOR_PER_TOKEN))
 }
 
 /// Decode delayed_messages_read (bytes 32-39) and L2 block number (bytes 40-47)
