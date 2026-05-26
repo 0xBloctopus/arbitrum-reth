@@ -443,3 +443,140 @@ fn eip7623_calldata_floor_matches_nitro() {
         "floor did not bind: gas_used {gas} != floor {expected_floor}"
     );
 }
+
+const ARBWASM: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x71]);
+
+/// A real classic Stylus program, used to build a single-fragment root.
+const ERC1155_STYLUS: &str = include_str!(
+    "../../arb-spec-tests/fixtures/stylus/regression/sepolia_253170068_assets/stylus_erc1155.hex"
+);
+
+/// Stylus merge-on-activate: deploy a fragment holding a program's compressed
+/// WASM plus a root that references it, then activate the root. arbreth must
+/// reconstruct the WASM from the fragment, charge the fragment read, and
+/// produce activation gas and state matching Nitro.
+#[test]
+#[ignore]
+fn stylus_root_activation_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(21u64)),
+        l1_block_number: 1,
+        timestamp: 1_700_000_000,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    // Zero the L1 price so the large deploys carry no poster gas noise.
+    let mut set_price = selector4("setL1PricePerUnit(uint256)").to_vec();
+    set_price.extend_from_slice(&word(0));
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), set_price, 2_000_000, 0).build().expect("set price"),
+        1,
+    ));
+
+    // Build a single-fragment root from the classic program.
+    let classic = alloy_primitives::hex::decode(ERC1155_STYLUS.trim()).expect("hex");
+    let dict = classic[3];
+    let compressed = &classic[4..];
+    let decompressed_len = arb_stylus::decompress_wasm(&classic).expect("decompress").len() as u32;
+
+    let mut fragment = vec![0xEFu8, 0xF0, 0x01];
+    fragment.extend_from_slice(compressed);
+    let frag_addr = create_address(owner, 1);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(1, None, wrap_init_code(&fragment), 500_000_000, 0).build().expect("deploy fragment"),
+        1,
+    ));
+
+    let mut root = vec![0xEFu8, 0xF0, 0x02, dict];
+    root.extend_from_slice(&decompressed_len.to_be_bytes());
+    root.extend_from_slice(frag_addr.as_slice());
+    let root_addr = create_address(owner, 2);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(2, None, wrap_init_code(&root), 100_000_000, 0).build().expect("deploy root"),
+        1,
+    ));
+
+    // Activate the root program (carries a data fee as value).
+    let mut act = selector4("activateProgram(address)").to_vec();
+    let mut arg = [0u8; 32];
+    arg[12..].copy_from_slice(root_addr.as_slice());
+    act.extend_from_slice(&arg);
+    let activate = SignedL2TxBuilder {
+        chain_id: L2_CHAIN_ID,
+        nonce: 3,
+        to: Some(ARBWASM),
+        value: U256::from(10u128).pow(U256::from(18u64)),
+        data: Bytes::from(act),
+        gas_limit: 200_000_000,
+        gas_price: 1_000_000_000,
+        max_fee_per_gas: 1_000_000_000,
+        max_priority_fee_per_gas: 0,
+        access_list: Vec::new(),
+        authorization_list: Vec::new(),
+        kind: L2TxKind::Eip1559,
+        signing_key: owner_key(),
+        l1_block_number: 1,
+        // Later timestamp so this lands in a fresh block; several messages
+        // sharing one timestamp do not all get sequenced.
+        timestamp: 1_700_000_010,
+        request_id: None,
+        sender: SEQUENCER_ALIAS,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("activate");
+    let act_idx = idx.next();
+    let act_hash = arb_test_harness::messaging::signed_l2_tx_hash(&activate);
+    steps.push(msg_step(act_idx, activate, 1));
+
+    let scenario = Scenario {
+        name: "stylus_root_activation".into(),
+        description: "merge-on-activate fragment reconstruction parity".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let raw = rig.dual.run(&scenario).expect("dual run");
+    let report = filter_genesis_noise(raw);
+    assert!(
+        report.is_clean(),
+        "root activation diverged from Nitro: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    // Sensitivity: the activation must have actually run (a root that failed to
+    // reconstruct would revert), so it must have consumed real gas on both nodes.
+    // The fragment and root must have deployed, and the activation must have
+    // executed — a failed reconstruction would leave no code or revert.
+    let frag_deployed = rig.dual.right.code(frag_addr, BlockId::Latest).map_or(false, |c| !c.is_empty());
+    let root_deployed = rig.dual.right.code(root_addr, BlockId::Latest).map_or(false, |c| !c.is_empty());
+    assert!(frag_deployed && root_deployed, "fragment/root did not deploy");
+    let hash = act_hash.expect("activate tx hash");
+    let gas = rig.dual.right.receipt(hash).map(|r| r.gas_used).unwrap_or(0);
+    eprintln!("[root] activation gas = {gas}");
+    assert!(gas > 100_000, "root activation did not execute (gas {gas})");
+}

@@ -83,6 +83,18 @@ pub fn is_stylus_fragment(bytecode: &[u8]) -> bool {
     bytecode.len() > 3 && bytecode[..3] == STYLUS_FRAGMENT_DISCRIMINANT
 }
 
+/// Returns `true` if the bytecode is a deployable Stylus component: a classic
+/// or root program, or (at the contract-limit version) a fragment. Used to
+/// permit storing such code despite its `0xEF` prefix, mirroring
+/// `IsStylusComponentPrefix`.
+pub fn is_stylus_component(bytecode: &[u8], arbos_version: u64) -> bool {
+    use arb_chainspec::arbos_version as av;
+    if arbos_version < av::ARBOS_VERSION_STYLUS_CONTRACT_LIMIT {
+        return is_stylus_deployable(bytecode, arbos_version);
+    }
+    is_stylus_deployable(bytecode, arbos_version) || is_stylus_fragment(bytecode)
+}
+
 /// Returns `true` if the bytecode is a deployable Stylus program.
 pub fn is_stylus_deployable(bytecode: &[u8], arbos_version: u64) -> bool {
     use arb_chainspec::arbos_version as av;

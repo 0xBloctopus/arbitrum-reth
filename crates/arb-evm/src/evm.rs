@@ -975,10 +975,8 @@ where
                 pages,
             };
         }
-        let is_stylus = deployed_code.len() >= 3
-            && deployed_code[0] == 0xEF
-            && deployed_code[1] == 0xF0
-            && deployed_code[2] == 0x00;
+        let is_stylus =
+            arb_stylus::is_stylus_component(&deployed_code, pre_ctx.block.arbos_version);
         if !deployed_code.is_empty() && deployed_code[0] == 0xEF && !is_stylus {
             context.journaled_state.inner.checkpoint_revert(checkpoint);
             return SubCreateResult {
@@ -1964,10 +1962,8 @@ where
                         .map(|c| c.data.to_vec())
                         .unwrap_or_default();
                     let starts_with_ef = code_bytes.first() == Some(&0xEF);
-                    let is_stylus = code_bytes.len() >= 3
-                        && code_bytes[0] == 0xEF
-                        && code_bytes[1] == 0xF0
-                        && code_bytes[2] == 0x00;
+                    let is_stylus =
+                        arb_stylus::is_stylus_component(&code_bytes, pre_ctx.block.arbos_version);
                     if starts_with_ef && !is_stylus {
                         if let Some(create_ctx) = create_ctx {
                             self.inner

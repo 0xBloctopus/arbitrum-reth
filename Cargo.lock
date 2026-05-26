@@ -1179,6 +1179,7 @@ dependencies = [
  "alloy-primitives",
  "arb-alloy-consensus",
  "arb-primitives",
+ "arb-stylus",
  "arb-test-harness",
  "arbitrary",
  "arbos",

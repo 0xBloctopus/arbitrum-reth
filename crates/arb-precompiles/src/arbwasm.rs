@@ -499,7 +499,54 @@ fn handle_activate_program(
         );
     }
 
-    let wasm = match arb_stylus::decompress_wasm(&code_bytes) {
+    // A root program's WASM lives in fragment contracts referenced by the root;
+    // reconstruct it, charging each fragment read and enforcing the size and
+    // count limits. A classic program decompresses inline.
+    let gas_limit = input.gas;
+    let wasm_result = if arb_stylus::is_stylus_root(&code_bytes) {
+        const MAX_FRAGMENT_CODE_SIZE: u64 = 24_576;
+        let max_wasm_size = params.max_wasm_size;
+        let max_fragment_count = params.max_fragment_count;
+        arb_stylus::get_wasm_from_root(
+            &code_bytes,
+            max_wasm_size,
+            max_fragment_count,
+            true,
+            |addr| {
+                let (warm, code) = {
+                    let load = input
+                        .internals_mut()
+                        .load_account_code(addr)
+                        .map_err(|e| arb_stylus::StylusError::Activation(format!("{e}")))?;
+                    let code = load
+                        .data
+                        .code()
+                        .map(|c| c.original_bytes())
+                        .unwrap_or_default()
+                        .to_vec();
+                    (!load.is_cold, code)
+                };
+                // Fail before charging the actual read unless a max-sized
+                // fragment read is affordable; out of gas consumes all of it.
+                if gas_limit.saturating_sub(gas_used)
+                    < arb_stylus::fragment_read_gas(warm, MAX_FRAGMENT_CODE_SIZE)
+                {
+                    gas_used = gas_limit;
+                    return Err(arb_stylus::StylusError::InvalidProgram(
+                        "out of gas reading fragment",
+                    ));
+                }
+                crate::charge_precompile_gas(
+                    &mut gas_used,
+                    arb_stylus::fragment_read_gas(warm, code.len() as u64),
+                );
+                Ok(code)
+            },
+        )
+    } else {
+        arb_stylus::decompress_wasm(&code_bytes)
+    };
+    let wasm = match wasm_result {
         Ok(w) => w,
         Err(_) => {
             return revert_sol_error(
