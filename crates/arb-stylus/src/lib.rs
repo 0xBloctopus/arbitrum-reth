@@ -83,6 +83,14 @@ pub fn is_stylus_fragment(bytecode: &[u8]) -> bool {
     bytecode.len() > 3 && bytecode[..3] == STYLUS_FRAGMENT_DISCRIMINANT
 }
 
+/// Returns `true` if the bytecode is a runnable Stylus program: a classic or a
+/// root program (a fragment is not runnable on its own). Root code can only
+/// have been deployed at the contract-limit version, so no version gate is
+/// needed here.
+pub fn is_stylus_runnable(bytecode: &[u8]) -> bool {
+    is_stylus_classic(bytecode) || is_stylus_root(bytecode)
+}
+
 /// Returns `true` if the bytecode is a deployable Stylus component: a classic
 /// or root program, or (at the contract-limit version) a fragment. Used to
 /// permit storing such code despite its `0xEF` prefix, mirroring

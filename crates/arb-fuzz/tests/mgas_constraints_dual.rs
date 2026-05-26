@@ -548,6 +548,16 @@ fn stylus_root_activation_matches_nitro() {
     let act_hash = arb_test_harness::messaging::signed_l2_tx_hash(&activate);
     steps.push(msg_step(act_idx, activate, 1));
 
+    // Call the activated root program so it dispatches to Stylus and runs the
+    // reconstructed WASM (an unknown selector reverts in-program; either way the
+    // call must route to Stylus and consume matching gas on both nodes).
+    let mut call_b = owner_tx_l1(4, Some(root_addr), vec![0x00, 0x00, 0x00, 0x00], 50_000_000, 0);
+    call_b.timestamp = 1_700_000_020;
+    let call = call_b.build().expect("call root");
+    let call_idx = idx.next();
+    let call_hash = arb_test_harness::messaging::signed_l2_tx_hash(&call);
+    steps.push(msg_step(call_idx, call, 1));
+
     let scenario = Scenario {
         name: "stylus_root_activation".into(),
         description: "merge-on-activate fragment reconstruction parity".into(),
@@ -577,6 +587,9 @@ fn stylus_root_activation_matches_nitro() {
     assert!(frag_deployed && root_deployed, "fragment/root did not deploy");
     let hash = act_hash.expect("activate tx hash");
     let gas = rig.dual.right.receipt(hash).map(|r| r.gas_used).unwrap_or(0);
-    eprintln!("[root] activation gas = {gas}");
+    let chash = call_hash.expect("call tx hash");
+    let cgas = rig.dual.right.receipt(chash).map(|r| r.gas_used).unwrap_or(0);
+    eprintln!("[root] activation gas = {gas}, call gas = {cgas}");
     assert!(gas > 100_000, "root activation did not execute (gas {gas})");
+    assert!(cgas > 21_000, "call did not dispatch to the Stylus program (gas {cgas})");
 }

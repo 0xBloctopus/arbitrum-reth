@@ -252,7 +252,7 @@ fn arb_selfdestruct<WIRE: InterpreterTypes, H: Host + ?Sized>(
     let acting_addr = ctx.interpreter.input.target_address();
     match ctx.host.load_account_code(acting_addr) {
         Some(code_load) => {
-            if arb_stylus::is_stylus_program(&code_load.data) {
+            if arb_stylus::is_stylus_runnable(&code_load.data) {
                 ctx.interpreter.halt(InstructionResult::Revert);
                 return;
             }
@@ -753,7 +753,7 @@ where
     };
 
     if pre_ctx.block.arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS
-        && arb_stylus::is_stylus_program(&bytecode)
+        && arb_stylus::is_stylus_runnable(&bytecode)
     {
         // SAFETY: see the `Arc::increment_strong_count` site above —
         // `precompile_ctx` was produced by `Arc::as_ptr` and is valid
@@ -1424,7 +1424,31 @@ where
             }
         }
     } else {
-        let decompressed = match arb_stylus::decompress_wasm(bytecode) {
+        // A root program's WASM is reconstructed from its fragments; execution
+        // does not charge for the reads (the activation path does) and reads
+        // fragment code straight from the database so it is not warmed.
+        let decompressed_result = if arb_stylus::is_stylus_root(bytecode) {
+            arb_stylus::get_wasm_from_root(
+                bytecode,
+                params.max_wasm_size,
+                params.max_fragment_count,
+                false,
+                |addr| {
+                    let db = &mut context.journaled_state.database;
+                    let info = db.basic(addr).ok().flatten().unwrap_or_default();
+                    let code = match info.code {
+                        Some(c) => c,
+                        None => db.code_by_hash(info.code_hash).map_err(|_| {
+                            arb_stylus::StylusError::InvalidProgram("fragment code unavailable")
+                        })?,
+                    };
+                    Ok(code.original_bytes().to_vec())
+                },
+            )
+        } else {
+            arb_stylus::decompress_wasm(bytecode)
+        };
+        let decompressed = match decompressed_result {
             Ok(w) => w,
             Err(e) => {
                 tracing::warn!(target: "stylus", codehash = %code_hash, err = %e, "WASM decompression failed");
@@ -1577,7 +1601,7 @@ fn is_stylus_call(frame_init: &FrameInit, arbos_version: u64) -> Option<Bytes> {
     if let FrameInput::Call(ref inputs) = frame_init.frame_input {
         if let Some((_, ref code)) = inputs.known_bytecode {
             let raw = code.original_bytes();
-            if arb_stylus::is_stylus_program(&raw) {
+            if arb_stylus::is_stylus_runnable(&raw) {
                 return Some(raw);
             }
         }
@@ -1698,7 +1722,7 @@ where
                 });
 
             if let Some(bytecode) = bytecode {
-                if arb_stylus::is_stylus_program(&bytecode) {
+                if arb_stylus::is_stylus_runnable(&bytecode) {
                     return Ok(Some(execute_stylus_program(
                         context, inputs, &bytecode, &self.ctx,
                     )));
