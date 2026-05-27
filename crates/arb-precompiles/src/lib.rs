@@ -131,10 +131,12 @@ pub fn charge_storage_write(gas_used: &mut u64, ctx: &arb_context::ArbPrecompile
 }
 
 /// Initialize gas tracking for a precompile call: charge argsCost
-/// (CopyGas * input words) and OpenArbosState (1 SLOAD = 800).
-pub fn init_precompile_gas(gas_used: &mut u64, input_len: usize) {
+/// (CopyGas * input words, computation) and OpenArbosState (1 SLOAD = 800,
+/// recorded as a storage read for the v60 pricing backlog).
+pub fn init_precompile_gas(gas_used: &mut u64, ctx: &arb_context::ArbPrecompileCtx, input_len: usize) {
     let args_cost = 3u64 * (input_len as u64).saturating_sub(4).div_ceil(32);
-    charge_precompile_gas(gas_used, args_cost + 800);
+    charge_precompile_gas(gas_used, args_cost);
+    charge_storage_read(gas_used, ctx, 800);
 }
 
 /// Initialize gas tracking for a `pure` precompile method: like

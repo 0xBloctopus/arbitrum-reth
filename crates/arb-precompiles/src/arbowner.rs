@@ -54,7 +54,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     };
 
     gas_used = 0;
-    crate::init_precompile_gas(&mut gas_used, data.len());
+    crate::init_precompile_gas(&mut gas_used, ctx, data.len());
 
     use IArbOwner::ArbOwnerCalls as Calls;
     let is_read_only = matches!(
