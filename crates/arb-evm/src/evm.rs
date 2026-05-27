@@ -323,7 +323,8 @@ pub fn reset_stylus_pages(ctx: &arb_context::ArbPrecompileCtx) {
 
 use arb_storage::{
     layout::{
-        derive_subspace_key, map_slot_b256, PROGRAMS_DATA_KEY, PROGRAMS_PARAMS_KEY,
+        derive_subspace_key, map_slot_b256,
+        programs::{MODULE_HASHES_KEY, PARAMS_KEY, PROGRAM_DATA_KEY},
         PROGRAMS_SUBSPACE, ROOT_STORAGE_KEY,
     },
     DatabaseError, DatabaseErrorInfo, Detached, Storage, StorageBackend, StorageError,
@@ -428,7 +429,7 @@ impl<DB: Database> StorageBackend for JournalBackend<'_, DB> {
 /// required.
 fn programs_params_storage() -> Storage<'static, Detached> {
     let programs_key = derive_subspace_key(ROOT_STORAGE_KEY, PROGRAMS_SUBSPACE);
-    let params_key = derive_subspace_key(programs_key.as_slice(), PROGRAMS_PARAMS_KEY);
+    let params_key = derive_subspace_key(programs_key.as_slice(), PARAMS_KEY);
     Storage::detached(ARBOS_STATE_ADDRESS, params_key)
 }
 
@@ -438,7 +439,7 @@ fn read_program_word<DB: Database>(
     code_hash: B256,
 ) -> Option<B256> {
     let programs_key = derive_subspace_key(ROOT_STORAGE_KEY, PROGRAMS_SUBSPACE);
-    let data_key = derive_subspace_key(programs_key.as_slice(), PROGRAMS_DATA_KEY);
+    let data_key = derive_subspace_key(programs_key.as_slice(), PROGRAM_DATA_KEY);
     let slot = map_slot_b256(data_key.as_slice(), &code_hash);
     sload_arbos(journal, slot).map(|v| B256::from(v.to_be_bytes::<32>()))
 }
@@ -450,7 +451,7 @@ fn read_module_hash<DB: Database>(
     code_hash: B256,
 ) -> Option<B256> {
     let programs_key = derive_subspace_key(ROOT_STORAGE_KEY, PROGRAMS_SUBSPACE);
-    let module_hashes_key = derive_subspace_key(programs_key.as_slice(), &[2]);
+    let module_hashes_key = derive_subspace_key(programs_key.as_slice(), MODULE_HASHES_KEY);
     let slot = map_slot_b256(module_hashes_key.as_slice(), &code_hash);
     sload_arbos(journal, slot).map(|v| B256::from(v.to_be_bytes::<32>()))
 }
