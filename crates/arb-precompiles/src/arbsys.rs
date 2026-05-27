@@ -113,6 +113,13 @@ fn handle_arb_block_number(
     ))
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("arbBlockHash: L2 block {requested} hash unavailable (current {current})")]
+struct MissingL2BlockHash {
+    requested: u64,
+    current: u64,
+}
+
 fn handle_arb_block_hash(
     input: &mut PrecompileInput<'_>,
     ctx: &ArbPrecompileCtx,
@@ -140,12 +147,14 @@ fn handle_arb_block_hash(
         return Err(ArbPrecompileError::empty_revert(gas_used).into());
     }
 
-    // L2 block hashes come from the header chain cache — the journal's
-    // block_hashes map is pre-populated with L1 hashes for the BLOCKHASH opcode.
-    let hash = ctx
-        .block
-        .cached_l2_block_hash(requested)
-        .unwrap_or(B256::ZERO);
+    // The window is populated before execution, so an in-range miss is an
+    // internal inconsistency — fail loudly instead of returning a zero hash.
+    let hash = match ctx.block.cached_l2_block_hash(requested) {
+        Some(hash) => hash,
+        None => {
+            return Err(ArbPrecompileError::fatal(MissingL2BlockHash { requested, current }).into())
+        }
+    };
 
     let args_cost = COPY_GAS * words_for_bytes(input.data.len().saturating_sub(4) as u64);
     let result_cost = COPY_GAS * words_for_bytes(32);
