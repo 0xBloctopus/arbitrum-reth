@@ -1003,6 +1003,13 @@ where
             }
             self.arb_ctx.coinbase = revm::context::Block::beneficiary(block);
             self.arb_ctx.basefee = U256::from(revm::context::Block::basefee(block));
+            // The block env carries no chain id, so the generic execution path
+            // (e.g. re-execute) leaves it defaulted; the producer sets it via
+            // with_arb_ctx. Source it from the EVM cfg when unset so retryable
+            // auto-redeem tx hashes are correct.
+            if self.arb_ctx.chain_id == 0 {
+                self.arb_ctx.chain_id = self.inner.evm().chain_id();
+            }
             if let Some(prevrandao) = revm::context::Block::prevrandao(block) {
                 if self.arb_ctx.l1_block_number == 0 {
                     self.arb_ctx.l1_block_number =
