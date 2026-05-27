@@ -11,6 +11,8 @@ const COLD_SLOAD: u64 = 2_100; // ColdSloadCostEIP2929
 const COLD_ACCOUNT: u64 = 2_600; // ColdAccountAccessCostEIP2929
 const SSTORE_SET: u64 = 20_000; // SstoreSetGasEIP2200
 const SSTORE_RESET: u64 = 5_000; // SstoreResetGasEIP2200
+const NEW_ACCOUNT: u64 = 25_000; // CallNewAccountGas
+const VALUE_TRANSFER: u64 = 9_000; // CallValueTransferGas
 const LOG_TOPIC_HISTORY: u64 = 256; // LogTopicHistoryGas (LogDataGas * 32)
 const LOG_DATA: u64 = 8; // LogDataGas
 
@@ -67,6 +69,24 @@ pub fn log(num_topics: u64, data_bytes: u64) -> MultiGas {
     MultiGas::history_growth_gas(LOG_TOPIC_HISTORY * num_topics + LOG_DATA * data_bytes)
 }
 
+/// Dimension split of the caller's access cost for a Stylus sub-call, matching
+/// EIP-2929 call gas (the forwarded gas the callee consumes is attributed by
+/// the callee, not here).
+pub fn call_cost(is_cold: bool, transfers_value: bool, new_account: bool) -> MultiGas {
+    let computation = WARM + if transfers_value { VALUE_TRANSFER } else { 0 };
+    let read = if is_cold { COLD_ACCOUNT - WARM } else { 0 };
+    let growth = if transfers_value && new_account {
+        NEW_ACCOUNT
+    } else {
+        0
+    };
+    MultiGas::from_pairs(&[
+        (ResourceKind::Computation, computation),
+        (ResourceKind::StorageAccessRead, read),
+        (ResourceKind::StorageGrowth, growth),
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +137,14 @@ mod tests {
     fn log_history_growth() {
         let mg = log(2, 10);
         assert_eq!(dims(&mg), (0, 0, 0, 0, 256 * 2 + 8 * 10));
+    }
+
+    #[test]
+    fn call_cost_variants() {
+        assert_eq!(dims(&call_cost(false, false, false)), (100, 0, 0, 0, 0));
+        assert_eq!(dims(&call_cost(true, false, false)), (100, 2_500, 0, 0, 0));
+        assert_eq!(dims(&call_cost(true, true, false)), (9_100, 2_500, 0, 0, 0));
+        assert_eq!(dims(&call_cost(true, true, true)), (9_100, 2_500, 0, 25_000, 0));
+        assert_eq!(call_cost(true, true, true).single_gas(), 100 + 2_500 + 9_000 + 25_000);
     }
 }
