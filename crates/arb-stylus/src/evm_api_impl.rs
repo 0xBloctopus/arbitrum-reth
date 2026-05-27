@@ -305,6 +305,9 @@ pub struct StylusEvmApi {
     /// Per-dimension gas attributed across this program's host calls. The
     /// `WasmComputation` residual is added by the caller once the program ends.
     multi_gas: MultiGas,
+    /// Gas forwarded to and consumed by sub-calls. Excluded from this frame's
+    /// residual because the callee frame attributes its own dimensions.
+    sub_call_gas: u64,
 }
 
 // SAFETY: `wasmer::FunctionEnv::new<T>` requires `T: Send + 'static`, so
@@ -366,6 +369,7 @@ impl StylusEvmApi {
             do_create,
             last_code: None,
             multi_gas: MultiGas::zero(),
+            sub_call_gas: 0,
         }
     }
 
@@ -374,8 +378,19 @@ impl StylusEvmApi {
         self.multi_gas
     }
 
+    /// Gas forwarded to and consumed by sub-calls; the caller excludes it from
+    /// this frame's `WasmComputation` residual.
+    pub fn sub_call_gas(&self) -> u64 {
+        self.sub_call_gas
+    }
+
     fn add_multi_gas(&mut self, gas: MultiGas) {
         self.multi_gas = self.multi_gas.saturating_add(gas);
+    }
+
+    fn record_sub_call(&mut self, base_cost_gas: MultiGas, sub_gas: u64) {
+        self.multi_gas = self.multi_gas.saturating_add(base_cost_gas);
+        self.sub_call_gas = self.sub_call_gas.saturating_add(sub_gas);
     }
 
     /// Get a mutable reference to the type-erased journal.
@@ -568,7 +583,7 @@ impl EvmApi for StylusEvmApi {
             }
         };
 
-        let (base_cost, oog) = wasm_call_cost(self.journal(), contract, &value, gas_left.0);
+        let (base_cost, oog, call_mg) = wasm_call_cost(self.journal(), contract, &value, gas_left.0);
         if oog {
             self.return_data = Vec::new();
             return Ok((0, Gas(gas_left.0), UserOutcomeKind::Failure, pages));
@@ -598,6 +613,7 @@ impl EvmApi for StylusEvmApi {
 
         self.return_data = result.output;
         let cost = base_cost.saturating_add(result.gas_cost);
+        self.record_sub_call(call_mg, result.gas_cost);
         self.sstore_refund = self.sstore_refund.saturating_add(result.refund);
 
         let outcome = if result.success {
@@ -634,7 +650,8 @@ impl EvmApi for StylusEvmApi {
             }
         };
 
-        let (base_cost, oog) = wasm_call_cost(self.journal(), contract, &U256::ZERO, gas_left.0);
+        let (base_cost, oog, call_mg) =
+            wasm_call_cost(self.journal(), contract, &U256::ZERO, gas_left.0);
         if oog {
             self.return_data = Vec::new();
             return Ok((0, Gas(gas_left.0), UserOutcomeKind::Failure, pages));
@@ -658,6 +675,7 @@ impl EvmApi for StylusEvmApi {
 
         self.return_data = result.output;
         let cost = base_cost.saturating_add(result.gas_cost);
+        self.record_sub_call(call_mg, result.gas_cost);
         self.sstore_refund = self.sstore_refund.saturating_add(result.refund);
 
         let outcome = if result.success {
@@ -694,7 +712,8 @@ impl EvmApi for StylusEvmApi {
             }
         };
 
-        let (base_cost, oog) = wasm_call_cost(self.journal(), contract, &U256::ZERO, gas_left.0);
+        let (base_cost, oog, call_mg) =
+            wasm_call_cost(self.journal(), contract, &U256::ZERO, gas_left.0);
         if oog {
             self.return_data = Vec::new();
             return Ok((0, Gas(gas_left.0), UserOutcomeKind::Failure, pages));
@@ -718,6 +737,7 @@ impl EvmApi for StylusEvmApi {
 
         self.return_data = result.output;
         let cost = base_cost.saturating_add(result.gas_cost);
+        self.record_sub_call(call_mg, result.gas_cost);
         self.sstore_refund = self.sstore_refund.saturating_add(result.refund);
 
         let outcome = if result.success {
@@ -790,6 +810,7 @@ impl EvmApi for StylusEvmApi {
 
         self.return_data = result.output.clone();
         let cost = base_cost.saturating_add(result.gas_cost);
+        self.record_sub_call(MultiGas::computation_gas(base_cost), result.gas_cost);
 
         let response = match result.address {
             Some(addr) => CreateResponse::Success(addr),
@@ -870,6 +891,7 @@ impl EvmApi for StylusEvmApi {
 
         self.return_data = result.output.clone();
         let cost = base_cost.saturating_add(result.gas_cost);
+        self.record_sub_call(MultiGas::computation_gas(base_cost), result.gas_cost);
 
         let response = match result.address {
             Some(addr) => CreateResponse::Success(addr),
@@ -988,54 +1010,32 @@ impl EvmApi for StylusEvmApi {
     }
 }
 
-/// Compute the base gas cost for a CALL from Stylus.
+/// Compute the caller's base gas cost for a CALL from Stylus, with its
+/// per-dimension split.
 ///
 /// Matches Go's `WasmCallCost`: EIP-2929 warm/cold access + value transfer +
-/// new account creation cost. Returns `(cost, out_of_gas)`.
+/// new account creation cost. Returns `(cost, out_of_gas, multi_gas)`; on
+/// out-of-gas the dimensions are zero (the failing call consumes all gas).
 fn wasm_call_cost(
     journal: &mut dyn JournalAccess,
     contract: Address,
     value: &U256,
     budget: u64,
-) -> (u64, bool) {
-    let mut total: u64 = 0;
-
-    // Static cost: warm storage read (computation)
-    total += WARM_ACCOUNT_ACCESS_COST; // 100
-    if total > budget {
-        return (total, true);
-    }
-
-    // Cold access cost
-    let warm = journal.address_in_access_list(contract);
-    if !warm {
+) -> (u64, bool, MultiGas) {
+    let is_cold = !journal.address_in_access_list(contract);
+    if is_cold {
         journal.add_address_to_access_list(contract);
-        let cold_cost = COLD_ACCOUNT_ACCESS_COST - WARM_ACCOUNT_ACCESS_COST; // 2500
-        total = total.saturating_add(cold_cost);
-        if total > budget {
-            return (total, true);
-        }
     }
-
     let transfers_value = !value.is_zero();
-    if transfers_value {
-        // Check if target is empty (for new account cost)
-        if let Ok(empty) = journal.is_account_empty(contract) {
-            if empty {
-                total = total.saturating_add(25000); // CallNewAccountGas
-                if total > budget {
-                    return (total, true);
-                }
-            }
-        }
-        // Value transfer cost
-        total = total.saturating_add(9000); // CallValueTransferGas
-        if total > budget {
-            return (total, true);
-        }
-    }
+    let new_account =
+        transfers_value && journal.is_account_empty(contract).unwrap_or(false);
 
-    (total, false)
+    let mg = multi_gas::call_cost(is_cold, transfers_value, new_account);
+    let total = mg.single_gas();
+    if total > budget {
+        return (total, true, MultiGas::zero());
+    }
+    (total, false, mg)
 }
 
 /// EIP-3529 SSTORE refund constants (post-London).

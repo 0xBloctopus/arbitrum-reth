@@ -1548,10 +1548,13 @@ where
         UserOutcome::OutOfInk | UserOutcome::OutOfStack => 0,
         _ => gas_left,
     };
+    // Gas forwarded to sub-calls is attributed by the callee frame, so exclude
+    // it from this frame's WasmComputation residual.
+    let sub_call_gas = instance.env().evm_api.sub_call_gas();
     let mut program_multi_gas = instance.env().evm_api.multi_gas();
     arbos::programs::attribute_wasm_computation(
         &mut program_multi_gas,
-        total_gas,
+        total_gas.saturating_sub(sub_call_gas),
         consumed_gas_left,
     );
     ctx.add_stylus_multi_gas(program_multi_gas);
