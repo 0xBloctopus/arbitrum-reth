@@ -13,7 +13,10 @@ use alloy_evm::{
     EvmFactory,
 };
 use alloy_primitives::{address, keccak256, Address, TxKind, B256, U256};
-use arb_evm::{config::ArbEvmConfig, multi_gas::MultiGasInspector, multi_gas::MultiGasSink};
+use arb_evm::{
+    config::ArbEvmConfig,
+    multi_gas::{MultiGasInspector, MultiGasSink},
+};
 use arb_primitives::ArbTransactionSigned;
 use arb_test_utils::{ArbosHarness, EmptyDb};
 use reth_chainspec::ChainSpec;

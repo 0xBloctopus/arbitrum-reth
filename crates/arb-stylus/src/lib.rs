@@ -14,6 +14,7 @@ pub mod host;
 pub mod ink;
 pub mod meter;
 pub mod middleware;
+pub mod multi_gas;
 pub mod native;
 pub mod pricing;
 pub mod run;
@@ -310,7 +311,8 @@ mod stylus_root_tests {
 
     #[test]
     fn root_reconstructs_wasm_across_fragments() {
-        let payload = b"\x00asm\x01\x00\x00\x00 stylus wasm body bytes for the fragment round trip".to_vec();
+        let payload =
+            b"\x00asm\x01\x00\x00\x00 stylus wasm body bytes for the fragment round trip".to_vec();
         let compressed =
             nitro_brotli::compress(&payload, 0, 22, nitro_brotli::Dictionary::Empty).unwrap();
         let mid = compressed.len() / 2;
@@ -332,7 +334,8 @@ mod stylus_root_tests {
 
     #[test]
     fn decompressed_length_mismatch_rejected_even_unenforced() {
-        let payload = b"\x00asm\x01\x00\x00\x00 stylus wasm body bytes for the fragment round trip".to_vec();
+        let payload =
+            b"\x00asm\x01\x00\x00\x00 stylus wasm body bytes for the fragment round trip".to_vec();
         let compressed =
             nitro_brotli::compress(&payload, 0, 22, nitro_brotli::Dictionary::Empty).unwrap();
         let frag = make_fragment(&compressed);
@@ -357,7 +360,8 @@ mod stylus_root_tests {
     fn fragment_count_over_limit_rejected_when_enforced() {
         let addrs: Vec<Address> = (0..5).map(Address::repeat_byte).collect();
         let root = make_root(0, 10, &addrs);
-        let err = get_wasm_from_root(&root, 100_000, 4, true, |_| Ok(make_fragment(&[]))).unwrap_err();
+        let err =
+            get_wasm_from_root(&root, 100_000, 4, true, |_| Ok(make_fragment(&[]))).unwrap_err();
         assert!(matches!(
             err,
             StylusError::InvalidProgram("fragment count exceeds limit")

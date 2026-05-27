@@ -13,8 +13,10 @@
 //!     cargo test -p arb-fuzz --test mgas_constraints_dual --release \
 //!     -- --ignored --nocapture
 
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
+};
 
 /// Each test spawns its own Nitro + arbreth pair, so they must not run
 /// concurrently (Docker / port / process contention). Serialize them.
@@ -43,9 +45,12 @@ const FUZZ_L1_BASE_FEE: u64 = 30_000_000_000;
 const ARBOS_VERSION: u64 = 60;
 
 const SEQUENCER_ALIAS: Address = address!("a4b000000000000000000073657175656e636572");
-const ARBOWNER: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x70]);
-const ARBGASINFO: Address =
-    Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x6c]);
+const ARBOWNER: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x70,
+]);
+const ARBGASINFO: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x6c,
+]);
 const FUNDER: Address = Address::new([0xa1; 20]);
 
 /// StorageAccessWrite resource kind (`ResourceKind` discriminant).
@@ -64,7 +69,13 @@ fn word(v: u64) -> [u8; 32] {
 /// Hand-encoded `setMultiGasPricingConstraints` with a single constraint and a
 /// single resource weight, matching the `(((uint8,uint64)[],uint32,uint64,uint64)[])`
 /// layout the precompile decodes.
-fn set_constraint_calldata(window: u32, target: u64, backlog: u64, resource: u8, weight: u64) -> Vec<u8> {
+fn set_constraint_calldata(
+    window: u32,
+    target: u64,
+    backlog: u64,
+    resource: u8,
+    weight: u64,
+) -> Vec<u8> {
     let mut d = Vec::with_capacity(4 + 320);
     d.extend_from_slice(&selector4(
         "setMultiGasPricingConstraints(((uint8,uint64)[],uint32,uint64,uint64)[])",
@@ -217,7 +228,13 @@ fn multi_gas_write_constraint_backlog_matches_nitro() {
     // dominates the backlog and the base fee escalates measurably.
     let cons = set_constraint_calldata(60, 100_000, 0, KIND_STORAGE_WRITE, 10_000);
     let i = idx.next();
-    steps.push(msg_step(i, owner_tx(0, Some(ARBOWNER), cons, 2_000_000).build().expect("set"), 1));
+    steps.push(msg_step(
+        i,
+        owner_tx(0, Some(ARBOWNER), cons, 2_000_000)
+            .build()
+            .expect("set"),
+        1,
+    ));
 
     // Deploy the SSTORE contract.
     let i = idx.next();
@@ -265,7 +282,11 @@ fn multi_gas_write_constraint_backlog_matches_nitro() {
     // Preconditions: the owner txs must have taken effect, so the write
     // backlog had something to grow. Empty code or an empty constraint set
     // would make the comparison below pass trivially.
-    let code = rig.dual.right.code(contract, BlockId::Latest).expect("code");
+    let code = rig
+        .dual
+        .right
+        .code(contract, BlockId::Latest)
+        .expect("code");
     assert!(!code.is_empty(), "storage contract did not deploy");
     let nonce = rig.dual.right.nonce(owner, BlockId::Latest).expect("nonce");
     assert!(nonce >= 5, "owner txs did not all execute (nonce {nonce})");
@@ -281,9 +302,16 @@ fn multi_gas_write_constraint_backlog_matches_nitro() {
         value: Some(U256::ZERO),
         gas: Some(3_000_000),
     };
-    let l = rig.dual.left.eth_call(base_fee_call.clone(), BlockId::Latest).ok();
+    let l = rig
+        .dual
+        .left
+        .eth_call(base_fee_call.clone(), BlockId::Latest)
+        .ok();
     let r = rig.dual.right.eth_call(base_fee_call, BlockId::Latest).ok();
-    assert_eq!(l, r, "getMultiGasBaseFee diverged: nitro={l:?} arbreth={r:?}");
+    assert_eq!(
+        l, r,
+        "getMultiGasBaseFee diverged: nitro={l:?} arbreth={r:?}"
+    );
 
     let fees = decode_uint256_array(&r.expect("base fee bytes"));
     let floor = rig
@@ -311,10 +339,12 @@ fn multi_gas_write_constraint_backlog_matches_nitro() {
     );
 }
 
-const ARBOWNERPUBLIC: Address =
-    Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x6b]);
-const ARBNATIVETOKENMANAGER: Address =
-    Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x73]);
+const ARBOWNERPUBLIC: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x6b,
+]);
+const ARBNATIVETOKENMANAGER: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x73,
+]);
 
 fn word_addr(a: Address) -> [u8; 32] {
     let mut w = [0u8; 32];
@@ -365,7 +395,9 @@ fn collect_tips_routing_matches_nitro() {
     let i = idx.next();
     steps.push(msg_step(
         i,
-        owner_tx_l1(0, Some(ARBOWNER), enable, 2_000_000, 0).build().expect("enable"),
+        owner_tx_l1(0, Some(ARBOWNER), enable, 2_000_000, 0)
+            .build()
+            .expect("enable"),
         1,
     ));
 
@@ -437,8 +469,15 @@ fn collect_tips_routing_matches_nitro() {
         .map(|b| U256::from_be_slice(&b) == U256::from(1u64))
         .unwrap_or(false);
     assert!(collect, "collectTips was not enabled");
-    let r = rig.dual.right.receipt(tip_hash.expect("tip hash")).expect("tip receipt");
-    eprintln!("[tips] status={} effective_gas_price={}", r.status, r.effective_gas_price);
+    let r = rig
+        .dual
+        .right
+        .receipt(tip_hash.expect("tip hash"))
+        .expect("tip receipt");
+    eprintln!(
+        "[tips] status={} effective_gas_price={}",
+        r.status, r.effective_gas_price
+    );
     assert_eq!(r.status, 1, "tipped tx did not succeed");
     assert!(
         r.effective_gas_price > 500_000_000,
@@ -504,13 +543,21 @@ fn native_token_mint_burn_matches_nitro() {
     let mut add = selector4("addNativeTokenOwner(address)").to_vec();
     add.extend_from_slice(&word_addr(owner));
     let i = idx.next();
-    steps.push(msg_step(i, owner_call(2, ARBOWNER, add, ENABLE_TIME + 5), 1));
+    steps.push(msg_step(
+        i,
+        owner_call(2, ARBOWNER, add, ENABLE_TIME + 5),
+        1,
+    ));
 
     // Mint, then a within-balance burn (both authorized happy paths).
     let mut mint = selector4("mintNativeToken(uint256)").to_vec();
     mint.extend_from_slice(&word_u256(U256::from(10u128).pow(U256::from(18u64))));
     let i = idx.next();
-    steps.push(msg_step(i, owner_call(3, ARBNATIVETOKENMANAGER, mint, ENABLE_TIME + 15), 1));
+    steps.push(msg_step(
+        i,
+        owner_call(3, ARBNATIVETOKENMANAGER, mint, ENABLE_TIME + 15),
+        1,
+    ));
 
     let mut burn = selector4("burnNativeToken(uint256)").to_vec();
     burn.extend_from_slice(&word_u256(U256::from(10u128).pow(U256::from(17u64))));
@@ -559,7 +606,11 @@ fn native_token_mint_burn_matches_nitro() {
                 from: Some(owner),
                 to: Some(ARBOWNERPUBLIC),
                 data: Some(Bytes::from(
-                    [selector4("isNativeTokenOwner(address)").as_slice(), &word_addr(owner)].concat(),
+                    [
+                        selector4("isNativeTokenOwner(address)").as_slice(),
+                        &word_addr(owner),
+                    ]
+                    .concat(),
                 )),
                 value: Some(U256::ZERO),
                 gas: Some(3_000_000),
@@ -571,10 +622,21 @@ fn native_token_mint_burn_matches_nitro() {
         .unwrap_or(false);
     assert!(is_owner, "owner was not enrolled as a native-token owner");
 
-    let ok_r = rig.dual.right.receipt(burn_ok_hash.expect("burn hash")).expect("burn receipt");
+    let ok_r = rig
+        .dual
+        .right
+        .receipt(burn_ok_hash.expect("burn hash"))
+        .expect("burn receipt");
     assert_eq!(ok_r.status, 1, "within-balance burn did not succeed");
-    let over_r = rig.dual.right.receipt(over_hash.expect("over hash")).expect("over receipt");
-    eprintln!("[native] burn_ok_gas={} over_burn_gas={}", ok_r.gas_used, over_r.gas_used);
+    let over_r = rig
+        .dual
+        .right
+        .receipt(over_hash.expect("over hash"))
+        .expect("over receipt");
+    eprintln!(
+        "[native] burn_ok_gas={} over_burn_gas={}",
+        ok_r.gas_used, over_r.gas_used
+    );
     assert_eq!(over_r.status, 0, "over-burn did not revert");
     // The soft revert (membership read + mint/burn charge, then the balance
     // check fails before the event) costs strictly less than the full
@@ -637,7 +699,9 @@ fn eip7623_calldata_floor_matches_nitro() {
     let i = idx.next();
     steps.push(msg_step(
         i,
-        owner_tx_l1(0, Some(ARBOWNER), enable, 2_000_000, 0).build().expect("enable"),
+        owner_tx_l1(0, Some(ARBOWNER), enable, 2_000_000, 0)
+            .build()
+            .expect("enable"),
         1,
     ));
 
@@ -648,7 +712,9 @@ fn eip7623_calldata_floor_matches_nitro() {
     let i = idx.next();
     steps.push(msg_step(
         i,
-        owner_tx_l1(1, Some(ARBOWNER), set_price, 2_000_000, 0).build().expect("set price"),
+        owner_tx_l1(1, Some(ARBOWNER), set_price, 2_000_000, 0)
+            .build()
+            .expect("set price"),
         1,
     ));
 
@@ -688,7 +754,12 @@ fn eip7623_calldata_floor_matches_nitro() {
 
     // The floor tx is the latest block's last tx. Its gas must equal the floor,
     // proving the floor bound (otherwise the test is insensitive).
-    let n = rig.dual.right.block(BlockId::Latest).expect("latest").number;
+    let n = rig
+        .dual
+        .right
+        .block(BlockId::Latest)
+        .expect("latest")
+        .number;
     let b = rig.dual.right.block(BlockId::Number(n)).expect("block");
     let hash = *b.tx_hashes.last().expect("floor tx");
     let gas = rig.dual.right.receipt(hash).expect("receipt").gas_used;
@@ -699,7 +770,9 @@ fn eip7623_calldata_floor_matches_nitro() {
     );
 }
 
-const ARBWASM: Address = Address::new([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x71]);
+const ARBWASM: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x71,
+]);
 
 /// A real classic Stylus program, used to build a single-fragment root.
 const ERC1155_STYLUS: &str = include_str!(
@@ -739,7 +812,9 @@ fn stylus_root_activation_matches_nitro() {
     let i = idx.next();
     steps.push(msg_step(
         i,
-        owner_tx_l1(0, Some(ARBOWNER), set_price, 2_000_000, 0).build().expect("set price"),
+        owner_tx_l1(0, Some(ARBOWNER), set_price, 2_000_000, 0)
+            .build()
+            .expect("set price"),
         1,
     ));
 
@@ -747,7 +822,9 @@ fn stylus_root_activation_matches_nitro() {
     let classic = alloy_primitives::hex::decode(ERC1155_STYLUS.trim()).expect("hex");
     let dict = classic[3];
     let compressed = &classic[4..];
-    let decompressed_len = arb_stylus::decompress_wasm(&classic).expect("decompress").len() as u32;
+    let decompressed_len = arb_stylus::decompress_wasm(&classic)
+        .expect("decompress")
+        .len() as u32;
 
     let mut fragment = vec![0xEFu8, 0xF0, 0x01];
     fragment.extend_from_slice(compressed);
@@ -755,7 +832,9 @@ fn stylus_root_activation_matches_nitro() {
     let i = idx.next();
     steps.push(msg_step(
         i,
-        owner_tx_l1(1, None, wrap_init_code(&fragment), 500_000_000, 0).build().expect("deploy fragment"),
+        owner_tx_l1(1, None, wrap_init_code(&fragment), 500_000_000, 0)
+            .build()
+            .expect("deploy fragment"),
         1,
     ));
 
@@ -766,7 +845,9 @@ fn stylus_root_activation_matches_nitro() {
     let i = idx.next();
     steps.push(msg_step(
         i,
-        owner_tx_l1(2, None, wrap_init_code(&root), 100_000_000, 0).build().expect("deploy root"),
+        owner_tx_l1(2, None, wrap_init_code(&root), 100_000_000, 0)
+            .build()
+            .expect("deploy root"),
         1,
     ));
 
@@ -806,7 +887,13 @@ fn stylus_root_activation_matches_nitro() {
     // Call the activated root program so it dispatches to Stylus and runs the
     // reconstructed WASM (an unknown selector reverts in-program; either way the
     // call must route to Stylus and consume matching gas on both nodes).
-    let mut call_b = owner_tx_l1(4, Some(root_addr), vec![0x00, 0x00, 0x00, 0x00], 50_000_000, 0);
+    let mut call_b = owner_tx_l1(
+        4,
+        Some(root_addr),
+        vec![0x00, 0x00, 0x00, 0x00],
+        50_000_000,
+        0,
+    );
     call_b.timestamp = 1_700_000_020;
     let call = call_b.build().expect("call root");
     let call_idx = idx.next();
@@ -836,16 +923,40 @@ fn stylus_root_activation_matches_nitro() {
     // reconstruct would revert), so it must have consumed real gas on both nodes.
     // The fragment and root must have deployed, and the activation must have
     // executed — a failed reconstruction would leave no code or revert.
-    let frag_deployed = rig.dual.right.code(frag_addr, BlockId::Latest).map_or(false, |c| !c.is_empty());
-    let root_deployed = rig.dual.right.code(root_addr, BlockId::Latest).map_or(false, |c| !c.is_empty());
-    assert!(frag_deployed && root_deployed, "fragment/root did not deploy");
+    let frag_deployed = rig
+        .dual
+        .right
+        .code(frag_addr, BlockId::Latest)
+        .map_or(false, |c| !c.is_empty());
+    let root_deployed = rig
+        .dual
+        .right
+        .code(root_addr, BlockId::Latest)
+        .map_or(false, |c| !c.is_empty());
+    assert!(
+        frag_deployed && root_deployed,
+        "fragment/root did not deploy"
+    );
     let hash = act_hash.expect("activate tx hash");
-    let gas = rig.dual.right.receipt(hash).map(|r| r.gas_used).unwrap_or(0);
+    let gas = rig
+        .dual
+        .right
+        .receipt(hash)
+        .map(|r| r.gas_used)
+        .unwrap_or(0);
     let chash = call_hash.expect("call tx hash");
-    let cgas = rig.dual.right.receipt(chash).map(|r| r.gas_used).unwrap_or(0);
+    let cgas = rig
+        .dual
+        .right
+        .receipt(chash)
+        .map(|r| r.gas_used)
+        .unwrap_or(0);
     eprintln!("[root] activation gas = {gas}, call gas = {cgas}");
     assert!(gas > 100_000, "root activation did not execute (gas {gas})");
-    assert!(cgas > 21_000, "call did not dispatch to the Stylus program (gas {cgas})");
+    assert!(
+        cgas > 21_000,
+        "call did not dispatch to the Stylus program (gas {cgas})"
+    );
 }
 
 /// A root whose declared decompressed length does not match what its fragments
@@ -880,14 +991,18 @@ fn stylus_root_length_mismatch_reverts_on_both() {
     let i = idx.next();
     steps.push(msg_step(
         i,
-        owner_tx_l1(0, Some(ARBOWNER), set_price, 2_000_000, 0).build().expect("set price"),
+        owner_tx_l1(0, Some(ARBOWNER), set_price, 2_000_000, 0)
+            .build()
+            .expect("set price"),
         1,
     ));
 
     let classic = alloy_primitives::hex::decode(ERC1155_STYLUS.trim()).expect("hex");
     let dict = classic[3];
     let compressed = &classic[4..];
-    let decompressed_len = arb_stylus::decompress_wasm(&classic).expect("decompress").len() as u32;
+    let decompressed_len = arb_stylus::decompress_wasm(&classic)
+        .expect("decompress")
+        .len() as u32;
 
     let mut fragment = vec![0xEFu8, 0xF0, 0x01];
     fragment.extend_from_slice(compressed);
@@ -895,7 +1010,9 @@ fn stylus_root_length_mismatch_reverts_on_both() {
     let i = idx.next();
     steps.push(msg_step(
         i,
-        owner_tx_l1(1, None, wrap_init_code(&fragment), 500_000_000, 0).build().expect("deploy fragment"),
+        owner_tx_l1(1, None, wrap_init_code(&fragment), 500_000_000, 0)
+            .build()
+            .expect("deploy fragment"),
         1,
     ));
 
@@ -908,7 +1025,9 @@ fn stylus_root_length_mismatch_reverts_on_both() {
     let i = idx.next();
     steps.push(msg_step(
         i,
-        owner_tx_l1(2, None, wrap_init_code(&root), 100_000_000, 0).build().expect("deploy root"),
+        owner_tx_l1(2, None, wrap_init_code(&root), 100_000_000, 0)
+            .build()
+            .expect("deploy root"),
         1,
     ));
 
@@ -964,9 +1083,207 @@ fn stylus_root_length_mismatch_reverts_on_both() {
     // The bad root must deploy (deploy-time only checks the prefix) and the
     // activation must revert — proving both nodes reject the mismatch rather
     // than one activating it.
-    let root_deployed = rig.dual.right.code(root_addr, BlockId::Latest).map_or(false, |c| !c.is_empty());
+    let root_deployed = rig
+        .dual
+        .right
+        .code(root_addr, BlockId::Latest)
+        .map_or(false, |c| !c.is_empty());
     assert!(root_deployed, "bad root did not deploy");
-    let r = rig.dual.right.receipt(act_hash.expect("activate hash")).expect("activate receipt");
-    eprintln!("[mismatch] activation status={} gas={}", r.status, r.gas_used);
-    assert_eq!(r.status, 0, "activation of a length-mismatched root must revert");
+    let r = rig
+        .dual
+        .right
+        .receipt(act_hash.expect("activate hash"))
+        .expect("activate receipt");
+    eprintln!(
+        "[mismatch] activation status={} gas={}",
+        r.status, r.gas_used
+    );
+    assert_eq!(
+        r.status, 0,
+        "activation of a length-mismatched root must revert"
+    );
+}
+
+/// WasmComputation resource kind (`ResourceKind` discriminant).
+const KIND_WASM_COMPUTATION: u8 = 8;
+
+/// A Stylus program's execution gas must reach the WasmComputation dimension, so
+/// a constraint weighting it escalates the base fee identically on both nodes.
+/// Lumping Stylus gas into computation would leave the WasmComputation backlog
+/// flat and diverge.
+#[test]
+#[ignore]
+fn stylus_wasm_computation_constraint_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(21u64)),
+        l1_block_number: 1,
+        timestamp: 1_700_000_000,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    let mut set_price = selector4("setL1PricePerUnit(uint256)").to_vec();
+    set_price.extend_from_slice(&word(0));
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), set_price, 2_000_000, 0)
+            .build()
+            .expect("set price"),
+        1,
+    ));
+
+    let cons = set_constraint_calldata(60, 100_000, 0, KIND_WASM_COMPUTATION, 10_000);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(1, Some(ARBOWNER), cons, 2_000_000, 0)
+            .build()
+            .expect("set constraint"),
+        1,
+    ));
+
+    let classic = alloy_primitives::hex::decode(ERC1155_STYLUS.trim()).expect("hex");
+    let dict = classic[3];
+    let compressed = &classic[4..];
+    let decompressed_len = arb_stylus::decompress_wasm(&classic)
+        .expect("decompress")
+        .len() as u32;
+
+    let mut fragment = vec![0xEFu8, 0xF0, 0x01];
+    fragment.extend_from_slice(compressed);
+    let frag_addr = create_address(owner, 2);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(2, None, wrap_init_code(&fragment), 500_000_000, 0)
+            .build()
+            .expect("deploy fragment"),
+        1,
+    ));
+
+    let mut root = vec![0xEFu8, 0xF0, 0x02, dict];
+    root.extend_from_slice(&decompressed_len.to_be_bytes());
+    root.extend_from_slice(frag_addr.as_slice());
+    let root_addr = create_address(owner, 3);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(3, None, wrap_init_code(&root), 100_000_000, 0)
+            .build()
+            .expect("deploy root"),
+        1,
+    ));
+
+    let mut act = selector4("activateProgram(address)").to_vec();
+    let mut arg = [0u8; 32];
+    arg[12..].copy_from_slice(root_addr.as_slice());
+    act.extend_from_slice(&arg);
+    let mut activate_b = owner_tx_l1(4, Some(ARBWASM), act, 200_000_000, 0);
+    activate_b.value = U256::from(10u128).pow(U256::from(18u64));
+    activate_b.timestamp = 1_700_000_010;
+    let act_idx = idx.next();
+    steps.push(msg_step(act_idx, activate_b.build().expect("activate"), 1));
+
+    // Repeated calls dispatch to the Stylus program, each consuming WASM gas that
+    // must grow the WasmComputation backlog.
+    let mut nonce = 5u64;
+    let mut ts = 1_700_000_020u64;
+    for _ in 0..8 {
+        let mut call_b = owner_tx_l1(
+            nonce,
+            Some(root_addr),
+            vec![0x00, 0x00, 0x00, 0x00],
+            50_000_000,
+            0,
+        );
+        call_b.timestamp = ts;
+        let i = idx.next();
+        steps.push(msg_step(i, call_b.build().expect("call root"), 1));
+        nonce += 1;
+        ts += 10;
+    }
+
+    let scenario = Scenario {
+        name: "stylus_wasm_computation_constraint".into(),
+        description: "Stylus execution gas grows the WasmComputation backlog".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let report = rig.dual.run(&scenario).expect("dual run");
+    assert!(
+        report.is_clean(),
+        "Stylus diverged under active WasmComputation constraint: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    let root_deployed = rig
+        .dual
+        .right
+        .code(root_addr, BlockId::Latest)
+        .map_or(false, |c| !c.is_empty());
+    assert!(root_deployed, "root did not deploy");
+
+    let base_fee_call = TxRequest {
+        from: Some(owner),
+        to: Some(ARBGASINFO),
+        data: Some(Bytes::from(selector4("getMultiGasBaseFee()").to_vec())),
+        value: Some(U256::ZERO),
+        gas: Some(3_000_000),
+    };
+    let l = rig
+        .dual
+        .left
+        .eth_call(base_fee_call.clone(), BlockId::Latest)
+        .ok();
+    let r = rig.dual.right.eth_call(base_fee_call, BlockId::Latest).ok();
+    assert_eq!(
+        l, r,
+        "getMultiGasBaseFee diverged: nitro={l:?} arbreth={r:?}"
+    );
+
+    let fees = decode_uint256_array(&r.expect("base fee bytes"));
+    let floor = rig
+        .dual
+        .right
+        .eth_call(
+            TxRequest {
+                from: Some(owner),
+                to: Some(ARBGASINFO),
+                data: Some(Bytes::from(selector4("getMinimumGasPrice()").to_vec())),
+                value: Some(U256::ZERO),
+                gas: Some(3_000_000),
+            },
+            BlockId::Latest,
+        )
+        .ok()
+        .map(|b| U256::from_be_slice(&b))
+        .unwrap_or(U256::ZERO);
+    // Only WasmComputation is weighted, so it is the sole dimension whose fee can
+    // escalate; the max rising above the floor proves Stylus gas reached it.
+    let max_fee = fees.iter().copied().max().unwrap_or(U256::ZERO);
+    eprintln!("[stylus-mgas] floor={floor} max_fee={max_fee} fees={fees:?}");
+    assert!(
+        max_fee > floor,
+        "WasmComputation base fee did not escalate above floor {floor}; Stylus gas \
+         never reached the WasmComputation dimension"
+    );
 }

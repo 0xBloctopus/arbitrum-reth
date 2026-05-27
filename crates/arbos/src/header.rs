@@ -227,8 +227,8 @@ pub fn derive_arb_header_info<E, F: Fn(Address, B256) -> Result<Option<U256>, E>
     let send_count_slot = storage_key_map(&send_merkle_sub, uint_to_hash_u64_be(0));
     let send_count = read_storage_u64_be(read_slot, addr, send_count_slot)?.unwrap_or(0);
 
-    let send_root =
-        merkle_root_from_partials(read_slot, addr, &send_merkle_sub, send_count)?.unwrap_or(B256::ZERO);
+    let send_root = merkle_root_from_partials(read_slot, addr, &send_merkle_sub, send_count)?
+        .unwrap_or(B256::ZERO);
 
     let l1_block_num_slot = storage_key_map(&blockhashes_sub, uint_to_hash_u64_be(0));
     let l1_block_number = read_storage_u64_be(read_slot, addr, l1_block_num_slot)?.unwrap_or(0);

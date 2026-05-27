@@ -32,17 +32,17 @@ use crate::{
 
 // Root-level field offsets and subspace IDs are defined once in the storage
 // layout module; re-export the offsets that callers reference by name.
+use arb_storage::layout::{
+    ADDRESS_TABLE_SUBSPACE, BLOCKHASHES_SUBSPACE, CHAIN_CONFIG_SUBSPACE, CHAIN_OWNER_SUBSPACE,
+    FEATURES_SUBSPACE, L1_PRICING_SUBSPACE, L2_PRICING_SUBSPACE, NATIVE_TOKEN_SUBSPACE,
+    PROGRAMS_SUBSPACE, RETRYABLES_SUBSPACE, SEND_MERKLE_SUBSPACE, TRANSACTION_FILTERER_SUBSPACE,
+};
 pub use arb_storage::layout::{
     BROTLI_COMPRESSION_LEVEL_OFFSET, CHAIN_ID_OFFSET, COLLECT_TIPS_OFFSET,
     FILTERED_FUNDS_RECIPIENT_OFFSET, GENESIS_BLOCK_NUM_OFFSET, INFRA_FEE_ACCOUNT_OFFSET,
     NATIVE_TOKEN_ENABLED_FROM_TIME_OFFSET, NETWORK_FEE_ACCOUNT_OFFSET,
     TRANSACTION_FILTERING_ENABLED_FROM_TIME_OFFSET, UPGRADE_TIMESTAMP_OFFSET,
     UPGRADE_VERSION_OFFSET, VERSION_OFFSET,
-};
-use arb_storage::layout::{
-    ADDRESS_TABLE_SUBSPACE, BLOCKHASHES_SUBSPACE, CHAIN_CONFIG_SUBSPACE, CHAIN_OWNER_SUBSPACE,
-    FEATURES_SUBSPACE, L1_PRICING_SUBSPACE, L2_PRICING_SUBSPACE, NATIVE_TOKEN_SUBSPACE,
-    PROGRAMS_SUBSPACE, RETRYABLES_SUBSPACE, SEND_MERKLE_SUBSPACE, TRANSACTION_FILTERER_SUBSPACE,
 };
 
 /// Cached root→subspace derivations: `keccak256(sub_key)` for each static child.
@@ -66,7 +66,10 @@ cached_root_key!(chain_config_root_key, CHAIN_CONFIG_SUBSPACE);
 cached_root_key!(programs_root_key, PROGRAMS_SUBSPACE);
 cached_root_key!(features_root_key, FEATURES_SUBSPACE);
 cached_root_key!(native_token_owner_root_key, NATIVE_TOKEN_SUBSPACE);
-cached_root_key!(transaction_filtering_root_key, TRANSACTION_FILTERER_SUBSPACE);
+cached_root_key!(
+    transaction_filtering_root_key,
+    TRANSACTION_FILTERER_SUBSPACE
+);
 
 /// The maximum ArbOS version supported by this node.
 pub const MAX_ARBOS_VERSION_SUPPORTED: u64 = 60;
