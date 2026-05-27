@@ -348,6 +348,128 @@ fn word_u256(v: U256) -> [u8; 32] {
     v.to_be_bytes()
 }
 
+/// Tip-collection routing parity. With collectTips enabled (v60), a transaction
+/// carrying a priority fee pays it (rather than the tip being dropped), and the
+/// tip is routed to the network fee account. The resulting balances — hence the
+/// state root — must match Nitro.
+#[test]
+#[ignore]
+fn collect_tips_routing_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let sender_key = B256::repeat_byte(0x43);
+    let sender = derive_address(sender_key);
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    const T0: u64 = 1_700_000_000;
+    let amount = U256::from(10u128).pow(U256::from(20u64));
+    for to in [owner, sender] {
+        let i = idx.next();
+        let dep = DepositBuilder {
+            from: FUNDER,
+            to,
+            amount,
+            l1_block_number: 1,
+            timestamp: T0,
+            request_seq: i,
+            base_fee_l1: 0,
+        }
+        .build()
+        .expect("deposit");
+        steps.push(msg_step(i, dep, 1));
+    }
+
+    // Owner enables tip collection.
+    let mut enable = selector4("setCollectTips(bool)").to_vec();
+    enable.extend_from_slice(&word(1));
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), enable, 2_000_000, 0).build().expect("enable"),
+        1,
+    ));
+
+    // A tx from a separate sender carrying a priority fee, in a later block so
+    // tip collection is already enabled.
+    let recipient = address!("00000000000000000000000000000000deadbeef");
+    let tipped = SignedL2TxBuilder {
+        chain_id: L2_CHAIN_ID,
+        nonce: 0,
+        to: Some(recipient),
+        value: U256::from(1u64),
+        data: Bytes::new(),
+        gas_limit: 1_000_000,
+        gas_price: 2_000_000_000,
+        max_fee_per_gas: 2_000_000_000,
+        max_priority_fee_per_gas: 1_000_000_000,
+        access_list: Vec::new(),
+        authorization_list: Vec::new(),
+        kind: L2TxKind::Eip1559,
+        signing_key: sender_key,
+        l1_block_number: 1,
+        timestamp: T0 + 10,
+        request_id: None,
+        sender: SEQUENCER_ALIAS,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("tipped tx");
+    let tip_idx = idx.next();
+    let tip_hash = arb_test_harness::messaging::signed_l2_tx_hash(&tipped);
+    steps.push(msg_step(tip_idx, tipped, 1));
+
+    let scenario = Scenario {
+        name: "collect_tips_routing".into(),
+        description: "tip routed to the network fee account under collectTips".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let raw = rig.dual.run(&scenario).expect("dual run");
+    let report = filter_genesis_noise(raw);
+    assert!(
+        report.is_clean(),
+        "tip routing diverged from Nitro: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    // Sensitivity: tip collection must be enabled, and the tx must have actually
+    // paid a tip (effective gas price well above the base fee) so the routing
+    // path was exercised.
+    let collect = rig
+        .dual
+        .right
+        .eth_call(
+            TxRequest {
+                from: Some(owner),
+                to: Some(ARBOWNERPUBLIC),
+                data: Some(Bytes::from(selector4("getCollectTips()").to_vec())),
+                value: Some(U256::ZERO),
+                gas: Some(3_000_000),
+            },
+            BlockId::Latest,
+        )
+        .ok()
+        .map(|b| U256::from_be_slice(&b) == U256::from(1u64))
+        .unwrap_or(false);
+    assert!(collect, "collectTips was not enabled");
+    let r = rig.dual.right.receipt(tip_hash.expect("tip hash")).expect("tip receipt");
+    eprintln!("[tips] status={} effective_gas_price={}", r.status, r.effective_gas_price);
+    assert_eq!(r.status, 1, "tipped tx did not succeed");
+    assert!(
+        r.effective_gas_price > 500_000_000,
+        "no tip was paid (effective gas price {} not above the base fee)",
+        r.effective_gas_price
+    );
+}
+
 /// Native-token mint/burn parity, including the over-burn path: minting and a
 /// within-balance burn must match Nitro, and a burn exceeding the balance must
 /// revert having paid the membership read and the mint/burn charge (not the
