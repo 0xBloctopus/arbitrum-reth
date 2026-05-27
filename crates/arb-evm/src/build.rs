@@ -476,6 +476,33 @@ fn load_state_params<D: Database>(
     *arb_hooks = Some(hooks);
 }
 
+/// Fill the `arbBlockHash` window `[current_l2-256, current_l2-1]`: parent from the
+/// header, deeper committed ancestors from `lookup`, stopping at the first gap.
+/// Entries already present (chunk-internal predecessors) are kept.
+fn populate_l2_block_hash_window(
+    block: &arb_context::BlockCtx,
+    current_l2: u64,
+    parent_hash: B256,
+    mut lookup: impl FnMut(u64) -> Option<B256>,
+) {
+    let Some(parent) = current_l2.checked_sub(1) else {
+        return;
+    };
+    block.cache_l2_block_hash(parent, parent_hash);
+    for offset in 2..=256u64 {
+        let Some(n) = current_l2.checked_sub(offset) else {
+            break;
+        };
+        if block.cached_l2_block_hash(n).is_some() {
+            continue;
+        }
+        match lookup(n) {
+            Some(hash) => block.cache_l2_block_hash(n, hash),
+            None => break,
+        }
+    }
+}
+
 impl<'db, DB, E, Spec, R> ArbBlockExecutor<'_, E, Spec, R>
 where
     DB: Database + 'db,
@@ -1034,8 +1061,20 @@ where
             }
         }
 
-        // L2 block hash cache for arbBlockHash() is populated by the producer
-        // (which has access to the state provider's header chain).
+        // L2 block hashes for arbBlockHash(): parent from the header, deeper
+        // committed ancestors from the state provider. The producer additionally
+        // surfaces unflushed in-memory ancestors via its own header-chain walk.
+        {
+            let parent_hash = self.arb_ctx.parent_hash;
+            let current_l2 = self.arb_ctx.l2_block_number;
+            let block = std::sync::Arc::clone(&self.precompile_ctx.block);
+            populate_l2_block_hash_window(&block, current_l2, parent_hash, |n| {
+                match state_ref.database.block_hash(n) {
+                    Ok(hash) if hash != B256::ZERO => Some(hash),
+                    _ => None,
+                }
+            });
+        }
 
         tracing::trace!(
             target: "arb::executor",
@@ -3194,4 +3233,47 @@ fn decode_retry_tx_gas(encoded: &[u8]) -> Option<u64> {
         <arb_alloy_consensus::tx::ArbRetryTx as alloy_rlp::Decodable>::decode(&mut &rlp_data[..])
             .ok()?;
     Some(retry.gas)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::populate_l2_block_hash_window;
+    use alloy_primitives::{B256, U256};
+    use arb_context::BlockCtx;
+    use std::collections::HashMap;
+
+    #[test]
+    fn fills_window_from_parent_and_lookup() {
+        let block = BlockCtx::new(60, 0, 0, 1000, false);
+        let parent_hash = B256::repeat_byte(0xfe);
+        let mut db: HashMap<u64, B256> = (744..=998)
+            .map(|n| (n, B256::from(U256::from(n))))
+            .collect();
+        populate_l2_block_hash_window(&block, 1000, parent_hash, |n| db.remove(&n));
+
+        assert_eq!(block.cached_l2_block_hash(999), Some(parent_hash));
+        assert_eq!(
+            block.cached_l2_block_hash(998),
+            Some(B256::from(U256::from(998u64)))
+        );
+        assert_eq!(
+            block.cached_l2_block_hash(744),
+            Some(B256::from(U256::from(744u64)))
+        );
+        assert_eq!(block.cached_l2_block_hash(743), None);
+    }
+
+    #[test]
+    fn keeps_chunk_internal_and_stops_at_gap() {
+        let block = BlockCtx::new(60, 0, 0, 1000, false);
+        populate_l2_block_hash_window(&block, 1000, B256::repeat_byte(0xfe), |n| {
+            (n == 997).then(|| B256::repeat_byte(0x97))
+        });
+        assert_eq!(
+            block.cached_l2_block_hash(999),
+            Some(B256::repeat_byte(0xfe))
+        );
+        assert_eq!(block.cached_l2_block_hash(998), None);
+        assert_eq!(block.cached_l2_block_hash(997), None);
+    }
 }
