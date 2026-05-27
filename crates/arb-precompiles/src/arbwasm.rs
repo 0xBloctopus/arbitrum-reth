@@ -417,7 +417,7 @@ fn handle_activate_program(
     let mut gas_used = 0u64;
     let args_cost = COPY_GAS * (input.data.len() as u64).saturating_sub(4).div_ceil(32);
     crate::charge_precompile_gas(&mut gas_used, args_cost);
-    crate::charge_precompile_gas(&mut gas_used, SLOAD_GAS);
+    crate::charge_storage_read(&mut gas_used, ctx, SLOAD_GAS);
 
     if ctx.block.arbos_version >= arb_chainspec::arbos_version::ARBOS_VERSION_60 {
         load_arbos(&mut input)?;
@@ -430,7 +430,7 @@ fn handle_activate_program(
             .programs
             .activation_gas(internals)
             .map_err(ArbPrecompileError::fatal)?;
-        crate::charge_precompile_gas(&mut gas_used, SLOAD_GAS);
+        crate::charge_storage_read(&mut gas_used, ctx, SLOAD_GAS);
         // The configurable activation gas is burned up front (default 0).
         crate::charge_precompile_gas(&mut gas_used, activation_gas);
     }
@@ -477,7 +477,7 @@ fn handle_activate_program(
             .map_err(ArbPrecompileError::fatal)?;
         (params, existing)
     };
-    crate::charge_precompile_gas(&mut gas_used, SLOAD_GAS);
+    crate::charge_storage_read(&mut gas_used, ctx, SLOAD_GAS);
 
     if code_bytes.is_empty() {
         return revert_sol_error(
@@ -538,8 +538,9 @@ fn handle_activate_program(
                         "out of gas reading fragment",
                     ));
                 }
-                crate::charge_precompile_gas(
+                crate::charge_storage_read(
                     &mut gas_used,
+                    ctx,
                     arb_stylus::fragment_read_gas(warm, code.len() as u64),
                 );
                 Ok(code)
@@ -613,7 +614,7 @@ fn handle_activate_program(
             .set_module_hash(internals, code_hash, info.module_hash)
             .map_err(ArbPrecompileError::fatal)?;
     }
-    crate::charge_precompile_gas(&mut gas_used, SSTORE_GAS);
+    crate::charge_storage_write(&mut gas_used, ctx, SSTORE_GAS);
 
     let data_fee = {
         let internals = input.internals_mut();
@@ -627,7 +628,8 @@ fn handle_activate_program(
             .update_model(internals, info.asm_estimate, time)
             .map_err(ArbPrecompileError::fatal)?
     };
-    crate::charge_precompile_gas(&mut gas_used, 5 * SLOAD_GAS + 2 * SSTORE_GAS);
+    crate::charge_storage_read(&mut gas_used, ctx, 5 * SLOAD_GAS);
+    crate::charge_storage_write(&mut gas_used, ctx, 2 * SSTORE_GAS);
 
     let estimate_kb = div_ceil(info.asm_estimate as u64, 1024).min(0xFF_FFFF) as u32;
     let new_program = Program {
@@ -651,7 +653,7 @@ fn handle_activate_program(
             .set_program(internals, code_hash, new_program)
             .map_err(ArbPrecompileError::fatal)?;
     }
-    crate::charge_precompile_gas(&mut gas_used, SSTORE_GAS);
+    crate::charge_storage_write(&mut gas_used, ctx, SSTORE_GAS);
 
     let stashed_outer_value = ctx.stylus_call_value();
     let inner_call_value = input.value;

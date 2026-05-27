@@ -108,6 +108,28 @@ pub fn charge_precompile_gas(gas_used: &mut u64, gas: u64) {
     *gas_used = gas_used.saturating_add(gas);
 }
 
+/// Charge precompile gas for an ArbOS state read, recording it as
+/// `StorageAccessRead` for the v60 multi-dimensional pricing backlog (mirrors
+/// the reference, which dimensions every state `Get` as a storage read). The
+/// single-gas total is unchanged; only the resource breakdown is recorded.
+pub fn charge_storage_read(gas_used: &mut u64, ctx: &arb_context::ArbPrecompileCtx, gas: u64) {
+    charge_precompile_gas(gas_used, gas);
+    ctx.add_precompile_multi_gas(
+        arb_primitives::multigas::ResourceKind::StorageAccessRead,
+        gas,
+    );
+}
+
+/// Charge precompile gas for an ArbOS state write, recording it as
+/// `StorageAccessWrite`. See [`charge_storage_read`].
+pub fn charge_storage_write(gas_used: &mut u64, ctx: &arb_context::ArbPrecompileCtx, gas: u64) {
+    charge_precompile_gas(gas_used, gas);
+    ctx.add_precompile_multi_gas(
+        arb_primitives::multigas::ResourceKind::StorageAccessWrite,
+        gas,
+    );
+}
+
 /// Initialize gas tracking for a precompile call: charge argsCost
 /// (CopyGas * input words) and OpenArbosState (1 SLOAD = 800).
 pub fn init_precompile_gas(gas_used: &mut u64, input_len: usize) {
