@@ -2211,22 +2211,29 @@ pub struct ArbEvmFactory {
     staged_ctx:
         std::sync::Arc<parking_lot::RwLock<Option<std::sync::Arc<arb_context::ArbPrecompileCtx>>>>,
     chain_caches: std::sync::Arc<arb_context::ChainCaches>,
-    /// When set, each clone gets its own staging slot; parallel offline
-    /// executors need the isolation, the live RPC handoff needs sharing.
+    /// When set, each clone gets its own staging slot and chain caches.
+    /// Parallel offline executors need that isolation (the caches window-evict,
+    /// so sharing them across workers clobbers each other); the live path
+    /// shares both across clones for the cross-thread RPC handoff.
     isolate_staging_on_clone: bool,
 }
 
 impl Clone for ArbEvmFactory {
     fn clone(&self) -> Self {
+        let isolate = self.isolate_staging_on_clone;
         Self {
             inner: self.inner,
-            staged_ctx: if self.isolate_staging_on_clone {
+            staged_ctx: if isolate {
                 std::sync::Arc::default()
             } else {
                 self.staged_ctx.clone()
             },
-            chain_caches: self.chain_caches.clone(),
-            isolate_staging_on_clone: self.isolate_staging_on_clone,
+            chain_caches: if isolate {
+                std::sync::Arc::default()
+            } else {
+                self.chain_caches.clone()
+            },
+            isolate_staging_on_clone: isolate,
         }
     }
 }
@@ -2348,19 +2355,21 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn isolated_clone_has_independent_staging() {
+    fn isolated_clone_has_independent_staging_and_caches() {
         let factory = ArbEvmFactory::isolated();
         let clone = factory.clone();
         factory.stage_ctx(Arc::new(arb_context::ArbPrecompileCtx::default()));
         assert!(factory.staged().is_some());
         assert!(clone.staged().is_none());
+        assert!(!Arc::ptr_eq(factory.chain_caches(), clone.chain_caches()));
     }
 
     #[test]
-    fn default_clone_shares_staging() {
+    fn default_clone_shares_staging_and_caches() {
         let factory = ArbEvmFactory::new();
         let clone = factory.clone();
         factory.stage_ctx(Arc::new(arb_context::ArbPrecompileCtx::default()));
         assert!(clone.staged().is_some());
+        assert!(Arc::ptr_eq(factory.chain_caches(), clone.chain_caches()));
     }
 }
