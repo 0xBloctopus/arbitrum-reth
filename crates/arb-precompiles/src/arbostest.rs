@@ -25,7 +25,7 @@ fn handler(input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResu
     if !ctx.block.allow_debug_precompiles {
         return crate::burn_all_revert(gas_limit);
     }
-    crate::init_precompile_gas(&mut gas_used, ctx, input.data.len());
+    crate::init_precompile_gas(&mut gas_used, input.data.len());
 
     let call = match IArbosTest::ArbosTestCalls::abi_decode(input.data) {
         Ok(c) => c,

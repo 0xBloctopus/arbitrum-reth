@@ -61,7 +61,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     let mut gas_used = 0u64;
     let gas_limit = input.gas;
     let data = input.data;
-    crate::init_precompile_gas(&mut gas_used, ctx, data.len());
+    crate::init_precompile_gas(&mut gas_used, data.len());
 
     let call = match IArbSys::ArbSysCalls::abi_decode(data) {
         Ok(c) => c,
