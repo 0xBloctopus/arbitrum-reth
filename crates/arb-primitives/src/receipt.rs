@@ -645,7 +645,7 @@ impl reth_codecs::Compact for ArbReceipt {
         0
     }
 
-    fn from_compact(buf: &[u8], _len: usize) -> (Self, &[u8]) {
+    fn from_compact(buf: &[u8], len: usize) -> (Self, &[u8]) {
         use bytes::Buf;
         let mut slice = buf;
         let receipt_len = slice.get_u32() as usize;
@@ -661,16 +661,30 @@ impl reth_codecs::Compact for ArbReceipt {
             }))
         });
 
-        // Read gas_used_for_l1 if present.
-        if slice.len() >= 8 {
+        // Bytes after the length-prefixed body, bounded by the on-disk `len` so
+        // trailing data from a larger blob is left for the caller.
+        let mut tail = len.saturating_sub(4 + receipt_len).min(slice.len());
+
+        if tail >= 8 {
             receipt.gas_used_for_l1 = slice.get_u64();
+            tail -= 8;
         }
 
-        // Read multi_gas_used if present (10 u64s = 80 bytes).
-        if slice.len() >= 80 {
+        // The multi-gas section is `[gas: K x u64][total][refund]`. K was
+        // NUM_RESOURCE_KIND at write time and may differ from the current value,
+        // so derive it from the section length instead of assuming it — receipts
+        // written under a smaller or larger K decode without over-reading.
+        if tail >= 16 {
+            let kinds_on_disk = (tail - 16) / 8;
+            let store = kinds_on_disk.min(crate::multigas::NUM_RESOURCE_KIND);
             let mut gas = [0u64; crate::multigas::NUM_RESOURCE_KIND];
-            for g in &mut gas {
-                *g = slice.get_u64();
+            for slot in gas.iter_mut().take(store) {
+                *slot = slice.get_u64();
+            }
+            // Consume any kinds beyond what this build's array holds (a tail
+            // written under a larger NUM_RESOURCE_KIND) to keep the cursor aligned.
+            for _ in store..kinds_on_disk {
+                slice.advance(8);
             }
             let total = slice.get_u64();
             let refund = slice.get_u64();
@@ -739,5 +753,75 @@ mod tests {
         let receipt = ArbReceipt::new(ArbReceiptKind::Legacy(alloy_receipt()));
         assert!(receipt.status());
         assert_eq!(receipt.cumulative_gas_used(), 21_000);
+    }
+
+    const NUM: usize = crate::multigas::NUM_RESOURCE_KIND;
+
+    /// Encode a receipt with an arbitrary `gas.len()` multi-gas width, mirroring
+    /// `to_compact` so tests can replay tails written under a different
+    /// `NUM_RESOURCE_KIND`.
+    fn compact_with_kinds(receipt: &ArbReceipt, gas: &[u64], total: u64, refund: u64) -> Vec<u8> {
+        use bytes::BufMut;
+        let mut body = Vec::new();
+        receipt.encode_2718(&mut body);
+        let mut buf = Vec::new();
+        buf.put_u32(body.len() as u32);
+        buf.put_slice(&body);
+        buf.put_u64(receipt.gas_used_for_l1);
+        for &g in gas {
+            buf.put_u64(g);
+        }
+        buf.put_u64(total);
+        buf.put_u64(refund);
+        buf
+    }
+
+    fn decode(buf: &[u8]) -> ArbReceipt {
+        let (receipt, rest) = <ArbReceipt as reth_codecs::Compact>::from_compact(buf, buf.len());
+        assert!(rest.is_empty(), "{} trailing bytes left", rest.len());
+        receipt
+    }
+
+    #[test]
+    fn from_compact_round_trips_current_kinds() {
+        let mut receipt = ArbReceipt::new(ArbReceiptKind::Eip1559(alloy_receipt()));
+        receipt.gas_used_for_l1 = 4242;
+        let gas: [u64; NUM] = std::array::from_fn(|i| (i as u64 + 1) * 10);
+        receipt.multi_gas_used = MultiGas::from_raw(gas, 999, 7);
+        let mut buf = Vec::new();
+        reth_codecs::Compact::to_compact(&receipt, &mut buf);
+        let decoded = decode(&buf);
+        assert_eq!(decoded.gas_used_for_l1, 4242);
+        assert_eq!(decoded.multi_gas_used, receipt.multi_gas_used);
+    }
+
+    #[test]
+    fn from_compact_pads_receipt_with_fewer_kinds() {
+        // An 8-kind, 80-byte tail written before NUM_RESOURCE_KIND grew — the
+        // case that previously over-read and panicked.
+        let mut receipt = ArbReceipt::new(ArbReceiptKind::Eip1559(alloy_receipt()));
+        receipt.gas_used_for_l1 = 11;
+        let gas: Vec<u64> = (1..=8).map(|n| n * 100).collect();
+        let decoded = decode(&compact_with_kinds(&receipt, &gas, 800, 5));
+        let mut expected = [0u64; NUM];
+        expected[..gas.len()].copy_from_slice(&gas);
+        assert_eq!(decoded.gas_used_for_l1, 11);
+        assert_eq!(decoded.multi_gas_used, MultiGas::from_raw(expected, 800, 5));
+    }
+
+    #[test]
+    fn from_compact_truncates_receipt_with_more_kinds() {
+        // A tail written under a larger NUM_RESOURCE_KIND: extra kinds are
+        // consumed (no over-read) but dropped.
+        let mut receipt = ArbReceipt::new(ArbReceiptKind::Eip1559(alloy_receipt()));
+        receipt.gas_used_for_l1 = 22;
+        let gas: Vec<u64> = (1..=(NUM as u64 + 1)).map(|n| n * 100).collect();
+        let decoded = decode(&compact_with_kinds(&receipt, &gas, 1000, 9));
+        let mut expected = [0u64; NUM];
+        expected.copy_from_slice(&gas[..NUM]);
+        assert_eq!(
+            decoded.multi_gas_used,
+            MultiGas::from_raw(expected, 1000, 9)
+        );
     }
 }
