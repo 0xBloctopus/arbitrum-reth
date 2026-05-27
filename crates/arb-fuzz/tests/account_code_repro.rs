@@ -15,8 +15,10 @@ use arb_fuzz::{
     },
     shared_nodes::{fuzz_arbos_version, next_msg_idx, shared_dual_exec, FUZZ_L2_CHAIN_ID},
 };
-use arb_test_harness::messaging::MessageBuilder;
-use arb_test_harness::scenario::{Scenario, ScenarioSetup, ScenarioStep};
+use arb_test_harness::{
+    messaging::MessageBuilder,
+    scenario::{Scenario, ScenarioSetup, ScenarioStep},
+};
 
 const WAT_ACCOUNT_CODE_LOOP: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),

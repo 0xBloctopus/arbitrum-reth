@@ -259,13 +259,21 @@ fn edge_cases() -> Vec<(&'static str, Address, Vec<u8>)> {
 
     let mut out: Vec<(&'static str, Address, Vec<u8>)> = Vec::new();
 
-    out.push(("edge.register_nonzero", addr(0x66), enc("4420e486", &[nz_word])));
+    out.push((
+        "edge.register_nonzero",
+        addr(0x66),
+        enc("4420e486", &[nz_word]),
+    ));
     out.push((
         "edge.address_exists_nonzero",
         addr(0x66),
         enc("a5025222", &[nz_word]),
     ));
-    out.push(("edge.lookup_unregistered", addr(0x66), enc("d4b6b5da", &[nz_word])));
+    out.push((
+        "edge.lookup_unregistered",
+        addr(0x66),
+        enc("d4b6b5da", &[nz_word]),
+    ));
     let mut idx = [0u8; 32];
     idx[31] = 0x10;
     out.push(("edge.lookup_index_oob", addr(0x66), enc("8a186788", &[idx])));
@@ -280,8 +288,16 @@ fn edge_cases() -> Vec<(&'static str, Address, Vec<u8>)> {
         enc("f6a455a2", &[nz_word]),
     ));
 
-    out.push(("edge.get_balance_nonzero", addr(0x65), enc("f8b2cb4f", &[nz_word])));
-    out.push(("edge.get_code_nonzero", addr(0x65), enc("7e105ce2", &[nz_word])));
+    out.push((
+        "edge.get_balance_nonzero",
+        addr(0x65),
+        enc("f8b2cb4f", &[nz_word]),
+    ));
+    out.push((
+        "edge.get_code_nonzero",
+        addr(0x65),
+        enc("7e105ce2", &[nz_word]),
+    ));
     out.push((
         "edge.is_chain_owner_nonzero",
         addr(0x6b),

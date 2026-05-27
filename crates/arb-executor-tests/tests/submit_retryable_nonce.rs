@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use alloy_consensus::transaction::Recovered;
 use alloy_evm::{
-    block::BlockExecutor, block::BlockExecutorFactory, eth::EthBlockExecutionCtx, EvmFactory,
+    block::{BlockExecutor, BlockExecutorFactory},
+    eth::EthBlockExecutionCtx,
+    EvmFactory,
 };
 use alloy_primitives::{address, Address, Bytes, Signature, B256, U256};
 use arb_alloy_consensus::tx::ArbSubmitRetryableTx;
@@ -14,9 +16,11 @@ use arb_primitives::{signed_tx::ArbTypedTransaction, ArbTransactionSigned};
 use arb_test_utils::{ArbosHarness, EmptyDb};
 use reth_chainspec::ChainSpec;
 use reth_evm::{ConfigureEvm, EvmEnv};
-use revm::database::{states::account_status::AccountStatus, PlainAccount, State};
-use revm::primitives::hardfork::SpecId;
-use revm::state::AccountInfo;
+use revm::{
+    database::{states::account_status::AccountStatus, PlainAccount, State},
+    primitives::hardfork::SpecId,
+    state::AccountInfo,
+};
 
 const ALIAS: Address = address!("526adbf6af5173dc7faa48ae1e9fe7a145dcf37a");
 const BENEFICIARY: Address = address!("4159dbf6af5173dc7faa48ae1e9fe7a145dce269");

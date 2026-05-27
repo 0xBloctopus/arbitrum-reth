@@ -1028,7 +1028,8 @@ where
         };
 
         // Derive header info (send_root, send_count, etc.) from post-execution state.
-        let arb_info = derive_header_info_from_state(state_provider.as_ref(), &bundle, input.sender)?;
+        let arb_info =
+            derive_header_info_from_state(state_provider.as_ref(), &bundle, input.sender)?;
 
         let final_mix_hash = arb_info
             .as_ref()

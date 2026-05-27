@@ -45,11 +45,11 @@ type SignersForRpc<Provider, Rpc> = parking_lot::RwLock<
     Vec<Box<dyn EthSigner<<Provider as TransactionsProvider>::Transaction, RpcTxReq<Rpc>>>>,
 >;
 
-use arbos::l1_pricing::{
-    PRICE_PER_UNIT_OFFSET as L1_PRICE_PER_UNIT, UNITS_SINCE_OFFSET as L1_UNITS_SINCE_UPDATE,
-};
-use arbos::l2_pricing::{
-    BASE_FEE_WEI_OFFSET as L2_BASE_FEE, MIN_BASE_FEE_WEI_OFFSET as L2_MIN_BASE_FEE,
+use arbos::{
+    l1_pricing::{
+        PRICE_PER_UNIT_OFFSET as L1_PRICE_PER_UNIT, UNITS_SINCE_OFFSET as L1_UNITS_SINCE_UPDATE,
+    },
+    l2_pricing::{BASE_FEE_WEI_OFFSET as L2_BASE_FEE, MIN_BASE_FEE_WEI_OFFSET as L2_MIN_BASE_FEE},
 };
 
 /// Non-zero calldata gas cost per byte (EIP-2028).

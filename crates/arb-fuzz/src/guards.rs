@@ -159,7 +159,9 @@ impl GuardedRun {
                     assert!(
                         rec.gas_used >= min,
                         "[{}] last tx gas_used {} below floor {}",
-                        self.name, rec.gas_used, min,
+                        self.name,
+                        rec.gas_used,
+                        min,
                     );
                 }
                 if let Some(max) = self.last_tx.max_gas {

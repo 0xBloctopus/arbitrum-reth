@@ -104,7 +104,9 @@ impl MockStorage {
     fn set(&self, addr: Address, slot: B256, value: U256) {
         self.map.borrow_mut().insert((addr, slot), value);
     }
-    fn reader(&self) -> impl Fn(Address, B256) -> Result<Option<U256>, std::convert::Infallible> + '_ {
+    fn reader(
+        &self,
+    ) -> impl Fn(Address, B256) -> Result<Option<U256>, std::convert::Infallible> + '_ {
         |addr, slot| Ok(self.map.borrow().get(&(addr, slot)).copied())
     }
 }
@@ -168,8 +170,9 @@ fn derive_arb_header_info_reads_version_from_storage() {
         B256::from(mapped)
     };
     s.set(ARBOS_STATE_ADDRESS, slot, U256::from(version));
-    let info =
-        derive_arb_header_info(&reader, arbos::l1_pricing::BATCH_POSTER_ADDRESS).unwrap().expect("some");
+    let info = derive_arb_header_info(&reader, arbos::l1_pricing::BATCH_POSTER_ADDRESS)
+        .unwrap()
+        .expect("some");
     assert_eq!(info.arbos_format_version, version);
     assert_eq!(info.send_count, 0);
     assert_eq!(info.l1_block_number, 0);
@@ -193,11 +196,21 @@ fn derive_collect_tips_excluded_for_non_batch_poster_coinbase() {
     s.set(ARBOS_STATE_ADDRESS, root_slot(11), U256::from(1u64)); // collectTips enabled
     let reader = s.reader();
 
-    let on = derive_arb_header_info(&reader, arbos::l1_pricing::BATCH_POSTER_ADDRESS).unwrap().expect("some");
-    assert!(on.collect_tips, "a batch-poster block collects tips when enabled");
+    let on = derive_arb_header_info(&reader, arbos::l1_pricing::BATCH_POSTER_ADDRESS)
+        .unwrap()
+        .expect("some");
+    assert!(
+        on.collect_tips,
+        "a batch-poster block collects tips when enabled"
+    );
 
-    let off = derive_arb_header_info(&reader, Address::ZERO).unwrap().expect("some");
-    assert!(!off.collect_tips, "a non-batch-poster block never collects tips");
+    let off = derive_arb_header_info(&reader, Address::ZERO)
+        .unwrap()
+        .expect("some");
+    assert!(
+        !off.collect_tips,
+        "a non-batch-poster block never collects tips"
+    );
 }
 
 #[test]
