@@ -7,19 +7,25 @@
 //! code-deposit gas is charged at frame return rather than at an opcode, so it
 //! is added in `create_end`.
 
-use alloy_evm::{eth::EthEvmContext, Database};
+use alloy_evm::Database;
 use alloy_primitives::{Address, B256, U256};
 use arb_primitives::multigas::MultiGas;
 use parking_lot::Mutex;
 use revm::{
     bytecode::opcode,
+    context::{JournalEntry, JournalInner},
     interpreter::{
         interpreter::EthInterpreter,
         interpreter_types::{InputsTr, Jumps},
         CallInputs, CallOutcome, CallValue, CreateInputs, CreateOutcome, Interpreter,
     },
-    Inspector,
+    Context, Inspector, Journal,
 };
+
+/// EVM context the inspector observes, generic over the block/tx/cfg/chain
+/// environments so it works on both the top-level executor and the Stylus
+/// sub-call interpreter; only the journal (fixed to `Journal<DB>`) is read.
+type Ctx<B, T, C, DB, Ch> = Context<B, T, C, DB, Journal<DB>, Ch>;
 use std::sync::Arc;
 
 use crate::multi_gas::classify::{classify, OpKind};
@@ -143,18 +149,21 @@ impl MultiGasInspector {
     }
 }
 
-impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInspector {
-    fn step(&mut self, interp: &mut Interpreter<EthInterpreter>, ctx: &mut EthEvmContext<DB>) {
+impl<B, T, C, DB: Database, Ch> Inspector<Ctx<B, T, C, DB, Ch>, EthInterpreter>
+    for MultiGasInspector
+{
+    fn step(&mut self, interp: &mut Interpreter<EthInterpreter>, ctx: &mut Ctx<B, T, C, DB, Ch>) {
         self.flush_dangling_frame();
         self.prev_gas = interp.gas.remaining();
         let op = interp.bytecode.opcode();
+        let journal = &ctx.journaled_state.inner;
         self.pending = match op {
             opcode::SLOAD => Pending::DeltaCold { account: false },
             opcode::BALANCE | opcode::EXTCODESIZE | opcode::EXTCODEHASH => {
                 Pending::DeltaCold { account: true }
             }
             opcode::EXTCODECOPY => Pending::ExtCodeCopy {
-                cold: address_cold(ctx, addr_arg(interp, 0)),
+                cold: address_cold(journal, addr_arg(interp, 0)),
                 words: word_count(peek(interp, 3)),
             },
             opcode::LOG0..=opcode::LOG4 => Pending::Log {
@@ -165,30 +174,30 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
                 let contract = interp.input.target_address();
                 let key = peek(interp, 0);
                 Pending::SStore {
-                    cold: slot_cold(ctx, contract, key),
+                    cold: slot_cold(journal, contract, key),
                     contract,
                     key,
                     new: peek(interp, 1),
-                    current: slot_values(ctx, contract, key).map(|(_, present)| present),
+                    current: slot_values(journal, contract, key).map(|(_, present)| present),
                 }
             }
             opcode::SELFDESTRUCT => {
                 let beneficiary = addr_arg(interp, 0);
                 let contract = interp.input.target_address();
                 Pending::SelfDestruct {
-                    cold: address_cold(ctx, beneficiary),
-                    new_account: account_empty(ctx, beneficiary)
-                        && !account_balance_zero(ctx, contract),
+                    cold: address_cold(journal, beneficiary),
+                    new_account: account_empty(journal, beneficiary)
+                        && !account_balance_zero(journal, contract),
                 }
             }
             opcode::CALL | opcode::CALLCODE => Pending::Frame {
-                cold: address_cold(ctx, addr_arg(interp, 1)),
+                cold: address_cold(journal, addr_arg(interp, 1)),
                 is_create: false,
                 is_plain_call: op == opcode::CALL,
                 delta: 0,
             },
             opcode::DELEGATECALL | opcode::STATICCALL => Pending::Frame {
-                cold: address_cold(ctx, addr_arg(interp, 1)),
+                cold: address_cold(journal, addr_arg(interp, 1)),
                 is_create: false,
                 is_plain_call: false,
                 delta: 0,
@@ -203,7 +212,11 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
         };
     }
 
-    fn step_end(&mut self, interp: &mut Interpreter<EthInterpreter>, ctx: &mut EthEvmContext<DB>) {
+    fn step_end(
+        &mut self,
+        interp: &mut Interpreter<EthInterpreter>,
+        ctx: &mut Ctx<B, T, C, DB, Ch>,
+    ) {
         let delta = self.prev_gas.saturating_sub(interp.gas.remaining());
         let pending = core::mem::replace(&mut self.pending, Pending::None);
         let gas = match pending {
@@ -245,7 +258,7 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
                 new,
                 current,
             } => {
-                let original = slot_values(ctx, contract, key)
+                let original = slot_values(&ctx.journaled_state.inner, contract, key)
                     .map(|(original, _)| original)
                     .unwrap_or(U256::ZERO);
                 let present = current.unwrap_or(original);
@@ -266,7 +279,7 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
 
     fn call(
         &mut self,
-        ctx: &mut EthEvmContext<DB>,
+        ctx: &mut Ctx<B, T, C, DB, Ch>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
         if let Pending::Frame {
@@ -279,8 +292,9 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
             self.pending = Pending::None;
             let value_transfer = matches!(inputs.value, CallValue::Transfer(v) if !v.is_zero());
             let own = call_own_cost(delta, inputs.gas_limit, value_transfer);
-            let new_account =
-                is_plain_call && value_transfer && account_empty(ctx, inputs.target_address);
+            let new_account = is_plain_call
+                && value_transfer
+                && account_empty(&ctx.journaled_state.inner, inputs.target_address);
             self.add(classify(OpKind::Call { cold, new_account }, own));
         }
         None
@@ -288,7 +302,7 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
 
     fn call_end(
         &mut self,
-        ctx: &mut EthEvmContext<DB>,
+        ctx: &mut Ctx<B, T, C, DB, Ch>,
         _inputs: &CallInputs,
         _outcome: &mut CallOutcome,
     ) {
@@ -299,7 +313,7 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
 
     fn create(
         &mut self,
-        _ctx: &mut EthEvmContext<DB>,
+        _ctx: &mut Ctx<B, T, C, DB, Ch>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
         if let Pending::Frame {
@@ -317,7 +331,7 @@ impl<DB: Database> Inspector<EthEvmContext<DB>, EthInterpreter> for MultiGasInsp
 
     fn create_end(
         &mut self,
-        ctx: &mut EthEvmContext<DB>,
+        ctx: &mut Ctx<B, T, C, DB, Ch>,
         _inputs: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -359,8 +373,7 @@ fn to_u64(v: U256) -> u64 {
     u64::try_from(v).unwrap_or(u64::MAX)
 }
 
-fn address_cold<DB: Database>(ctx: &EthEvmContext<DB>, addr: Address) -> bool {
-    let journal = &ctx.journaled_state.inner;
+fn address_cold(journal: &JournalInner<JournalEntry>, addr: Address) -> bool {
     if journal.warm_addresses.is_warm(&addr) {
         return false;
     }
@@ -370,31 +383,24 @@ fn address_cold<DB: Database>(ctx: &EthEvmContext<DB>, addr: Address) -> bool {
     }
 }
 
-fn slot_cold<DB: Database>(ctx: &EthEvmContext<DB>, addr: Address, key: U256) -> bool {
-    let journal = &ctx.journaled_state.inner;
+fn slot_cold(journal: &JournalInner<JournalEntry>, addr: Address, key: U256) -> bool {
     match journal.state.get(&addr).and_then(|a| a.storage.get(&key)) {
         Some(slot) => slot.is_cold_transaction_id(journal.transaction_id),
         None => true,
     }
 }
 
-fn slot_values<DB: Database>(
-    ctx: &EthEvmContext<DB>,
+fn slot_values(
+    journal: &JournalInner<JournalEntry>,
     addr: Address,
     key: U256,
 ) -> Option<(U256, U256)> {
-    let slot = ctx
-        .journaled_state
-        .inner
-        .state
-        .get(&addr)?
-        .storage
-        .get(&key)?;
+    let slot = journal.state.get(&addr)?.storage.get(&key)?;
     Some((slot.original_value, slot.present_value))
 }
 
-fn account_empty<DB: Database>(ctx: &EthEvmContext<DB>, addr: Address) -> bool {
-    match ctx.journaled_state.inner.state.get(&addr) {
+fn account_empty(journal: &JournalInner<JournalEntry>, addr: Address) -> bool {
+    match journal.state.get(&addr) {
         Some(account) => {
             account.info.balance.is_zero()
                 && account.info.nonce == 0
@@ -404,8 +410,8 @@ fn account_empty<DB: Database>(ctx: &EthEvmContext<DB>, addr: Address) -> bool {
     }
 }
 
-fn account_balance_zero<DB: Database>(ctx: &EthEvmContext<DB>, addr: Address) -> bool {
-    match ctx.journaled_state.inner.state.get(&addr) {
+fn account_balance_zero(journal: &JournalInner<JournalEntry>, addr: Address) -> bool {
+    match journal.state.get(&addr) {
         Some(account) => account.info.balance.is_zero(),
         None => true,
     }
