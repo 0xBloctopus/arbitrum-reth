@@ -1,4 +1,3 @@
-pub mod api;
 pub mod data_pricer;
 mod error;
 pub mod memory;
@@ -15,7 +14,7 @@ use revm::Database;
 use arb_storage::{Storage, StorageBackedUint64, StorageBackend, SystemStateBackend};
 
 pub use self::types::{
-    evm_memory_cost, to_word_size, ActivationResult, EvmData, ProgParams, RequestType, UserOutcome,
+    evm_memory_cost, to_word_size, ActivationResult, EvmData, ProgParams, UserOutcome,
 };
 use self::{
     data_pricer::{init_data_pricer, open_data_pricer, DataPricer, ARBITRUM_START_TIME},
