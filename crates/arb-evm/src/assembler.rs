@@ -82,7 +82,7 @@ where
         // Derive send root, send count, l1 block number, and arbos version
         // from the post-execution state.
         let arb_info =
-            derive_header_info_from_state(state_provider, bundle_state, evm_env.block_env.beneficiary());
+            derive_header_info_from_state(state_provider, bundle_state, evm_env.block_env.beneficiary())?;
 
         let mix_hash = arb_info
             .as_ref()
@@ -121,7 +121,7 @@ where
             mix_hash,
             nonce: B64::from(delayed_messages_read.to_be_bytes()),
             base_fee_per_gas: Some(
-                read_base_fee_from_state(state_provider, bundle_state)
+                read_base_fee_from_state(state_provider, bundle_state)?
                     .unwrap_or(evm_env.block_env.basefee()),
             ),
             number: l2_block_number,
@@ -156,12 +156,10 @@ where
 fn read_base_fee_from_state(
     state_provider: &dyn reth_storage_api::StateProvider,
     _bundle_state: &revm_database::BundleState,
-) -> Option<u64> {
+) -> Result<Option<u64>, BlockExecutionError> {
     // Read from committed state (pre-execution baseFee = current block's header baseFee).
-    let read_slot = |addr: alloy_primitives::Address, slot: B256| -> Option<U256> {
-        state_provider.storage(addr, slot).ok().flatten()
-    };
-    read_l2_base_fee(&read_slot)
+    let read_slot = |addr: alloy_primitives::Address, slot: B256| state_provider.storage(addr, slot);
+    read_l2_base_fee(&read_slot).map_err(BlockExecutionError::other)
 }
 
 /// Derive ArbHeaderInfo by reading ArbOS state from the post-execution state.
@@ -172,18 +170,18 @@ fn derive_header_info_from_state(
     state_provider: &dyn reth_storage_api::StateProvider,
     bundle_state: &revm_database::BundleState,
     coinbase: alloy_primitives::Address,
-) -> Option<ArbHeaderInfo> {
-    let read_slot = |addr: alloy_primitives::Address, slot: B256| -> Option<U256> {
+) -> Result<Option<ArbHeaderInfo>, BlockExecutionError> {
+    let read_slot = |addr: alloy_primitives::Address, slot: B256| {
         // Check bundle state first (post-execution changes).
         if let Some(account) = bundle_state.state.get(&addr) {
             let slot_u256 = U256::from_be_bytes(slot.0);
             if let Some(storage_slot) = account.storage.get(&slot_u256) {
-                return Some(storage_slot.present_value);
+                return Ok(Some(storage_slot.present_value));
             }
         }
         // Fall back to the committed state provider.
-        state_provider.storage(addr, slot).ok().flatten()
+        state_provider.storage(addr, slot)
     };
 
-    derive_arb_header_info(&read_slot, coinbase)
+    derive_arb_header_info(&read_slot, coinbase).map_err(BlockExecutionError::other)
 }
