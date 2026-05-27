@@ -112,7 +112,10 @@ fn handle_get_fee_collector(
 
     let poster_state = match bpt.open_poster(internals, poster, false) {
         Ok(state) => state,
-        Err(_) => return Err(ArbPrecompileError::empty_revert(*gas_used).into()),
+        Err(_) => {
+            crate::charge_precompile_gas(gas_used, SLOAD_GAS);
+            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        }
     };
     let pay_to = poster_state
         .pay_to(internals)
@@ -147,7 +150,10 @@ fn handle_set_fee_collector(
 
     let poster_state = match bpt.open_poster(internals, poster, false) {
         Ok(state) => state,
-        Err(_) => return Err(ArbPrecompileError::empty_revert(*gas_used).into()),
+        Err(_) => {
+            crate::charge_precompile_gas(gas_used, SLOAD_GAS);
+            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        }
     };
     let old_collector = poster_state
         .pay_to(internals)
@@ -189,7 +195,7 @@ fn handle_get_batch_posters(
         .map_err(ArbPrecompileError::fatal)?;
     let bpt = arb_state.l1_pricing_state.batch_poster_table();
 
-    const MAX_MEMBERS: u64 = 1024;
+    const MAX_MEMBERS: u64 = 65_536;
     let posters = bpt
         .all_posters_capped(internals, MAX_MEMBERS)
         .map_err(ArbPrecompileError::fatal)?;

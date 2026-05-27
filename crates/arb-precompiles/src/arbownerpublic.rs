@@ -543,8 +543,15 @@ fn handle_rectify_chain_owner(
     match arb_state.chain_owners.rectify_mapping(internals, addr) {
         Ok(()) => {}
         Err(AddressSetError::Storage(s)) => return Err(ArbPrecompileError::fatal(s).into()),
-        Err(AddressSetError::NotMember | AddressSetError::MappingAlreadyConsistent) => {
-            return Err(ArbPrecompileError::empty_revert(*gas_used).into())
+        Err(AddressSetError::NotMember) => {
+            // Reverts after the membership read.
+            crate::charge_precompile_gas(gas_used, SLOAD_GAS);
+            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        }
+        Err(AddressSetError::MappingAlreadyConsistent) => {
+            // Reverts after reading membership, index, backing slot, and size.
+            crate::charge_precompile_gas(gas_used, 4 * SLOAD_GAS);
+            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
         }
     }
 

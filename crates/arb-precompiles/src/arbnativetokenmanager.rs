@@ -140,7 +140,13 @@ fn handle_burn(
     let current_balance = acct.data.info.balance;
 
     if current_balance < amount {
-        return Err(ArbPrecompileError::empty_revert(gas_used).into());
+        // The membership read and mint/burn charge are taken before the balance
+        // check, so an over-burn reverts having paid them.
+        let revert_gas = (gas_used + SLOAD_GAS + MINT_BURN_GAS).min(gas_limit);
+        return Ok(PrecompileOutput::new_reverted(
+            revert_gas,
+            Default::default(),
+        ));
     }
 
     let new_balance = current_balance - amount;

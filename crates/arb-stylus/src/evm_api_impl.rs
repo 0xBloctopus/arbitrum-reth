@@ -334,11 +334,15 @@ impl StylusEvmApi {
         do_create: Option<DoCreateFn>,
     ) -> Self {
         let journal: *mut dyn JournalAccess = {
-            let r: &mut (dyn JournalAccess + '_) = &mut *journal;
-            #[allow(clippy::unnecessary_cast)]
-            {
-                r as *mut (dyn JournalAccess + '_) as *mut dyn JournalAccess
-            }
+            // Bind the trait object with the borrow's own lifetime (so `DB` need
+            // not be `'static`), then erase that lifetime to `'static` for
+            // storage. A direct `as` cast forces the object to `'static` and
+            // thus `DB: 'static`, which the callers cannot satisfy.
+            // SAFETY: the caller guarantees the journal pointer outlives this
+            // struct (see the `# Safety` section above); transmuting a reference
+            // to a same-layout raw pointer only erases that lifetime.
+            let r: &mut dyn JournalAccess = &mut *journal;
+            core::mem::transmute(r)
         };
         Self {
             journal,
