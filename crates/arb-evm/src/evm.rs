@@ -1544,6 +1544,18 @@ where
         gas_result.record_refund(sstore_refund);
     }
 
+    let consumed_gas_left = match outcome {
+        UserOutcome::OutOfInk | UserOutcome::OutOfStack => 0,
+        _ => gas_left,
+    };
+    let mut program_multi_gas = instance.env().evm_api.multi_gas();
+    arbos::programs::attribute_wasm_computation(
+        &mut program_multi_gas,
+        total_gas,
+        consumed_gas_left,
+    );
+    ctx.add_stylus_multi_gas(program_multi_gas);
+
     match outcome {
         UserOutcome::Success => {
             InterpreterResult::new(InstructionResult::Return, output, gas_result)

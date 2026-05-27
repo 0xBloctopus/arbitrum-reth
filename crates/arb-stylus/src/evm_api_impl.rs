@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use alloy_primitives::{Address, Log, B256, U256};
 use arb_chainspec::arbos_version::ARBOS_VERSION_STYLUS_LAST_CODE_CACHE_FIX;
+use arb_primitives::multigas::MultiGas;
 use revm::Database;
+
+use crate::multi_gas;
 
 use crate::{
     evm_api::{CreateResponse, EvmApi, UserOutcomeKind},
@@ -299,6 +302,9 @@ pub struct StylusEvmApi {
     do_create: Option<DoCreateFn>,
     /// Most recent `account_code` result; a same-address repeat read is free.
     last_code: Option<(Address, Vec<u8>)>,
+    /// Per-dimension gas attributed across this program's host calls. The
+    /// `WasmComputation` residual is added by the caller once the program ends.
+    multi_gas: MultiGas,
 }
 
 // SAFETY: `wasmer::FunctionEnv::new<T>` requires `T: Send + 'static`, so
@@ -359,7 +365,17 @@ impl StylusEvmApi {
             do_call,
             do_create,
             last_code: None,
+            multi_gas: MultiGas::zero(),
         }
+    }
+
+    /// Per-dimension gas attributed across this program's host calls.
+    pub fn multi_gas(&self) -> MultiGas {
+        self.multi_gas
+    }
+
+    fn add_multi_gas(&mut self, gas: MultiGas) {
+        self.multi_gas = self.multi_gas.saturating_add(gas);
     }
 
     /// Get a mutable reference to the type-erased journal.
@@ -409,6 +425,7 @@ impl EvmApi for StylusEvmApi {
                 .0
                 .saturating_add(sload_cost)
                 .saturating_add(evm_api_gas_to_use.0));
+            self.add_multi_gas(multi_gas::state_load(is_cold));
 
             self.storage_cache
                 .slots
@@ -483,6 +500,12 @@ impl EvmApi for StylusEvmApi {
             remaining -= sstore_cost;
             total_gas += sstore_cost;
             self.sstore_refund += sstore_refund(&info);
+            self.add_multi_gas(multi_gas::state_store(
+                info.is_cold,
+                info.original_value,
+                info.present_value,
+                info.new_value,
+            ));
         }
 
         // A budget that was exhausted — by partial OOG or by hitting exactly
@@ -890,6 +913,7 @@ impl EvmApi for StylusEvmApi {
         }
 
         let log_data = data[topic_bytes..].to_vec();
+        self.add_multi_gas(multi_gas::log(topics as u64, log_data.len() as u64));
 
         let addr = self.address;
         let log = Log::new(addr, topic_list, log_data.into()).expect("too many log topics");
@@ -906,6 +930,7 @@ impl EvmApi for StylusEvmApi {
         } else {
             WARM_ACCOUNT_ACCESS_COST
         };
+        self.add_multi_gas(multi_gas::account_touch(is_cold, 0));
         Ok((balance, Gas(gas_cost)))
     }
 
@@ -928,6 +953,7 @@ impl EvmApi for StylusEvmApi {
             WARM_ACCOUNT_ACCESS_COST
         };
         let gas_cost = WASM_EXT_CODE_COST + access_cost;
+        self.add_multi_gas(multi_gas::account_touch(is_cold, WASM_EXT_CODE_COST));
         // If insufficient gas, return empty code but still charge
         if gas_left.0 < gas_cost {
             return Ok((Vec::new(), Gas(gas_cost)));
@@ -946,6 +972,7 @@ impl EvmApi for StylusEvmApi {
         } else {
             WARM_ACCOUNT_ACCESS_COST
         };
+        self.add_multi_gas(multi_gas::account_touch(is_cold, 0));
         Ok((hash, Gas(gas_cost)))
     }
 

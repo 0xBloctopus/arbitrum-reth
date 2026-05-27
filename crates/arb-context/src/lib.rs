@@ -1,6 +1,7 @@
 //! Per-block and per-tx context threaded into Arbitrum precompile handlers.
 
 use alloy_primitives::{Address, B256, U256};
+use arb_primitives::multigas::MultiGas;
 use arb_storage::{Detached, SystemStateBackend};
 use arbos::{
     arbos_state::{arbos_from_input_system, ArbosState, ArbosStateError},
@@ -221,6 +222,7 @@ pub struct TxCtx {
     pub stylus_program_counts: HashMap<Address, u32>,
     pub stylus_pages_open: u16,
     pub stylus_pages_ever: u16,
+    pub stylus_multi_gas: MultiGas,
 }
 
 impl TxCtx {
@@ -360,6 +362,15 @@ impl ArbPrecompileCtx {
 
     pub fn stylus_call_value(&self) -> U256 {
         self.tx.lock().stylus_call_value
+    }
+
+    pub fn add_stylus_multi_gas(&self, gas: MultiGas) {
+        let mut tx = self.tx.lock();
+        tx.stylus_multi_gas = tx.stylus_multi_gas.saturating_add(gas);
+    }
+
+    pub fn stylus_multi_gas(&self) -> MultiGas {
+        self.tx.lock().stylus_multi_gas
     }
 
     /// Increment the reentrancy counter for `addr` and return `true` if this

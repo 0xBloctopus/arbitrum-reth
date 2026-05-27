@@ -2213,20 +2213,24 @@ where
             U256::ZERO
         };
 
-        // The multi-gas inspector (when installed) publishes the per-opcode
-        // execution gas; the intrinsic is charged before the first opcode and
-        // added here. Gas the inspector cannot observe as opcodes — precompile
-        // execution, which the reference attributes to computation — is folded
-        // into computation as the remainder so the split totals evm_gas_used
-        // exactly. Without an inspector, all execution gas lumps into
-        // computation. Poster gas is added separately.
+        // EVM opcode gas comes from the inspector, Stylus host gas from the
+        // per-tx accumulator; both carry their own dimensions. The intrinsic is
+        // added here. Whatever the dimensioned amounts don't cover (precompile
+        // execution) is folded into computation as the remainder, so the split
+        // totals evm_gas_used. Poster gas is added separately.
+        let stylus_multi_gas = self.precompile_ctx.stylus_multi_gas();
         let execution_multi_gas = match self.multi_gas_sink.lock().take() {
             Some(opcode_gas) => {
-                let observed = intrinsic_multi_gas.saturating_add(opcode_gas);
+                let observed = intrinsic_multi_gas
+                    .saturating_add(opcode_gas)
+                    .saturating_add(stylus_multi_gas);
                 let remainder = evm_gas_used.saturating_sub(observed.single_gas());
                 observed.saturating_add(MultiGas::computation_gas(remainder))
             }
-            None => MultiGas::computation_gas(evm_gas_used),
+            None => {
+                let remainder = evm_gas_used.saturating_sub(stylus_multi_gas.single_gas());
+                stylus_multi_gas.saturating_add(MultiGas::computation_gas(remainder))
+            }
         };
         let mut charged_multi_gas =
             MultiGas::single_dim_gas(poster_gas).saturating_add(execution_multi_gas);
@@ -2239,8 +2243,7 @@ where
         if calldata_floor_gas > gas_before_floor {
             let top_up = calldata_floor_gas - gas_before_floor;
             adjust_result_gas_used(&mut output.result.result, top_up);
-            charged_multi_gas =
-                charged_multi_gas.saturating_add(MultiGas::l2_calldata_gas(top_up));
+            charged_multi_gas = charged_multi_gas.saturating_add(MultiGas::l2_calldata_gas(top_up));
         }
 
         // Capture effective tip per gas (gas_price - base_fee, clamped >= 0).
