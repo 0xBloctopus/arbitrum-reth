@@ -201,6 +201,7 @@ pub fn merkle_root_from_partials<F: Fn(Address, B256) -> Option<U256>>(
 /// Derive ArbHeaderInfo from storage reads.
 pub fn derive_arb_header_info<F: Fn(Address, B256) -> Option<U256>>(
     read_slot: &F,
+    coinbase: Address,
 ) -> Option<ArbHeaderInfo> {
     let addr = ARBOS_STATE_ADDRESS;
     let root_storage_key: &[u8] = &[];
@@ -220,8 +221,11 @@ pub fn derive_arb_header_info<F: Fn(Address, B256) -> Option<U256>>(
     let l1_block_num_slot = storage_key_map(&blockhashes_sub, uint_to_hash_u64_be(0));
     let l1_block_number = read_storage_u64_be(read_slot, addr, l1_block_num_slot).unwrap_or(0);
 
+    // Tip collection is a block-level property: the flag only applies to blocks
+    // produced by the batch poster, not to delayed-message blocks.
     let collect_tips_slot = storage_key_map(root_storage_key, uint_to_hash_u64_be(11));
-    let collect_tips = read_storage_u64_be(read_slot, addr, collect_tips_slot).unwrap_or(0) != 0;
+    let collect_tips = read_storage_u64_be(read_slot, addr, collect_tips_slot).unwrap_or(0) != 0
+        && coinbase == crate::l1_pricing::BATCH_POSTER_ADDRESS;
 
     Some(ArbHeaderInfo {
         send_root,

@@ -81,7 +81,8 @@ where
 
         // Derive send root, send count, l1 block number, and arbos version
         // from the post-execution state.
-        let arb_info = derive_header_info_from_state(state_provider, bundle_state);
+        let arb_info =
+            derive_header_info_from_state(state_provider, bundle_state, evm_env.block_env.beneficiary());
 
         let mix_hash = arb_info
             .as_ref()
@@ -170,6 +171,7 @@ fn read_base_fee_from_state(
 fn derive_header_info_from_state(
     state_provider: &dyn reth_storage_api::StateProvider,
     bundle_state: &revm_database::BundleState,
+    coinbase: alloy_primitives::Address,
 ) -> Option<ArbHeaderInfo> {
     let read_slot = |addr: alloy_primitives::Address, slot: B256| -> Option<U256> {
         // Check bundle state first (post-execution changes).
@@ -183,5 +185,5 @@ fn derive_header_info_from_state(
         state_provider.storage(addr, slot).ok().flatten()
     };
 
-    derive_arb_header_info(&read_slot)
+    derive_arb_header_info(&read_slot, coinbase)
 }

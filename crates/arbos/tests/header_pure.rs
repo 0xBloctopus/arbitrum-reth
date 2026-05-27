@@ -168,11 +168,36 @@ fn derive_arb_header_info_reads_version_from_storage() {
         B256::from(mapped)
     };
     s.set(ARBOS_STATE_ADDRESS, slot, U256::from(version));
-    let info = derive_arb_header_info(&reader).expect("some");
+    let info =
+        derive_arb_header_info(&reader, arbos::l1_pricing::BATCH_POSTER_ADDRESS).expect("some");
     assert_eq!(info.arbos_format_version, version);
     assert_eq!(info.send_count, 0);
     assert_eq!(info.l1_block_number, 0);
     assert_eq!(info.send_root, B256::ZERO);
+}
+
+/// Root-level ArbOS slot for `offset` (`keccak256([0;31]) || offset`).
+fn root_slot(offset: u8) -> B256 {
+    use alloy_primitives::keccak256;
+    let h = keccak256([0u8; 31]);
+    let mut mapped = [0u8; 32];
+    mapped[..31].copy_from_slice(&h.0[..31]);
+    mapped[31] = offset;
+    B256::from(mapped)
+}
+
+#[test]
+fn derive_collect_tips_excluded_for_non_batch_poster_coinbase() {
+    let s = MockStorage::default();
+    s.set(ARBOS_STATE_ADDRESS, root_slot(0), U256::from(60u64)); // version
+    s.set(ARBOS_STATE_ADDRESS, root_slot(11), U256::from(1u64)); // collectTips enabled
+    let reader = s.reader();
+
+    let on = derive_arb_header_info(&reader, arbos::l1_pricing::BATCH_POSTER_ADDRESS).expect("some");
+    assert!(on.collect_tips, "a batch-poster block collects tips when enabled");
+
+    let off = derive_arb_header_info(&reader, Address::ZERO).expect("some");
+    assert!(!off.collect_tips, "a non-batch-poster block never collects tips");
 }
 
 #[test]

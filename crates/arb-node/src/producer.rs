@@ -1028,7 +1028,7 @@ where
         };
 
         // Derive header info (send_root, send_count, etc.) from post-execution state.
-        let arb_info = derive_header_info_from_state(state_provider.as_ref(), &bundle);
+        let arb_info = derive_header_info_from_state(state_provider.as_ref(), &bundle, input.sender);
 
         let final_mix_hash = arb_info
             .as_ref()
@@ -1520,6 +1520,7 @@ fn filter_unchanged_storage(bundle: &mut BundleState) {
 fn derive_header_info_from_state(
     state_provider: &dyn StateProvider,
     bundle_state: &BundleState,
+    coinbase: Address,
 ) -> Option<ArbHeaderInfo> {
     let read_slot = |addr: Address, slot: B256| -> Option<U256> {
         if let Some(account) = bundle_state.state.get(&addr) {
@@ -1531,7 +1532,7 @@ fn derive_header_info_from_state(
         state_provider.storage(addr, slot).ok().flatten()
     };
 
-    derive_arb_header_info(&read_slot)
+    derive_arb_header_info(&read_slot, coinbase)
 }
 
 /// Augment the bundle with direct cache modifications not captured by EVM transitions.
