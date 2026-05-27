@@ -583,7 +583,8 @@ impl EvmApi for StylusEvmApi {
             }
         };
 
-        let (base_cost, oog, call_mg) = wasm_call_cost(self.journal(), contract, &value, gas_left.0);
+        let (base_cost, oog, call_mg) =
+            wasm_call_cost(self.journal(), contract, &value, gas_left.0);
         if oog {
             self.return_data = Vec::new();
             return Ok((0, Gas(gas_left.0), UserOutcomeKind::Failure, pages));
@@ -1027,8 +1028,7 @@ fn wasm_call_cost(
         journal.add_address_to_access_list(contract);
     }
     let transfers_value = !value.is_zero();
-    let new_account =
-        transfers_value && journal.is_account_empty(contract).unwrap_or(false);
+    let new_account = transfers_value && journal.is_account_empty(contract).unwrap_or(false);
 
     let mg = multi_gas::call_cost(is_cold, transfers_value, new_account);
     let total = mg.single_gas();

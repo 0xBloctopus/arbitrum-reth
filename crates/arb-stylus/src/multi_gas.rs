@@ -144,7 +144,13 @@ mod tests {
         assert_eq!(dims(&call_cost(false, false, false)), (100, 0, 0, 0, 0));
         assert_eq!(dims(&call_cost(true, false, false)), (100, 2_500, 0, 0, 0));
         assert_eq!(dims(&call_cost(true, true, false)), (9_100, 2_500, 0, 0, 0));
-        assert_eq!(dims(&call_cost(true, true, true)), (9_100, 2_500, 0, 25_000, 0));
-        assert_eq!(call_cost(true, true, true).single_gas(), 100 + 2_500 + 9_000 + 25_000);
+        assert_eq!(
+            dims(&call_cost(true, true, true)),
+            (9_100, 2_500, 0, 25_000, 0)
+        );
+        assert_eq!(
+            call_cost(true, true, true).single_gas(),
+            100 + 2_500 + 9_000 + 25_000
+        );
     }
 }
