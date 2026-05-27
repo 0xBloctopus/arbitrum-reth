@@ -23,7 +23,7 @@ static SERIAL: Mutex<()> = Mutex::new(());
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use arb_fuzz::{arbitrary_impls::interop::wrap_init_code, scaffolding::selector4};
 use arb_test_harness::{
-    dual_exec::{DiffReport, DualExec},
+    dual_exec::DualExec,
     genesis::GenesisBuilder,
     messaging::{
         signed_tx::{derive_address, L2TxKind, SignedL2TxBuilder},
@@ -135,27 +135,6 @@ impl Rig {
         Rig {
             dual: DualExec::new(nitro, arbreth),
         }
-    }
-}
-
-/// Genesis trie state_root / hashes legitimately differ (Nitro geth-fork zombie
-/// nodes); execution fields (gas_used, receipts_root, per-tx receipts) must match.
-fn filter_genesis_noise(report: DiffReport) -> DiffReport {
-    let DiffReport {
-        block_diffs,
-        tx_diffs,
-        state_diffs,
-        log_diffs,
-    } = report;
-    let block_diffs = block_diffs
-        .into_iter()
-        .filter(|d| !matches!(d.field.as_str(), "parent_hash" | "block_hash" | "state_root"))
-        .collect();
-    DiffReport {
-        block_diffs,
-        tx_diffs,
-        state_diffs,
-        log_diffs,
     }
 }
 
@@ -275,8 +254,7 @@ fn multi_gas_write_constraint_backlog_matches_nitro() {
         steps,
     };
 
-    let raw = rig.dual.run(&scenario).expect("dual run");
-    let report = filter_genesis_noise(raw);
+    let report = rig.dual.run(&scenario).expect("dual run");
     assert!(
         report.is_clean(),
         "execution diverged under active write constraint: blocks={:?} txs={:?}",
@@ -431,8 +409,7 @@ fn collect_tips_routing_matches_nitro() {
         steps,
     };
 
-    let raw = rig.dual.run(&scenario).expect("dual run");
-    let report = filter_genesis_noise(raw);
+    let report = rig.dual.run(&scenario).expect("dual run");
     assert!(
         report.is_clean(),
         "tip routing diverged from Nitro: blocks={:?} txs={:?}",
@@ -562,8 +539,7 @@ fn native_token_mint_burn_matches_nitro() {
         steps,
     };
 
-    let raw = rig.dual.run(&scenario).expect("dual run");
-    let report = filter_genesis_noise(raw);
+    let report = rig.dual.run(&scenario).expect("dual run");
     assert!(
         report.is_clean(),
         "native-token mint/burn diverged from Nitro: blocks={:?} txs={:?}",
@@ -702,8 +678,7 @@ fn eip7623_calldata_floor_matches_nitro() {
         steps,
     };
 
-    let raw = rig.dual.run(&scenario).expect("dual run");
-    let report = filter_genesis_noise(raw);
+    let report = rig.dual.run(&scenario).expect("dual run");
     assert!(
         report.is_clean(),
         "calldata floor diverged from Nitro: blocks={:?} txs={:?}",
@@ -849,8 +824,7 @@ fn stylus_root_activation_matches_nitro() {
         steps,
     };
 
-    let raw = rig.dual.run(&scenario).expect("dual run");
-    let report = filter_genesis_noise(raw);
+    let report = rig.dual.run(&scenario).expect("dual run");
     assert!(
         report.is_clean(),
         "root activation diverged from Nitro: blocks={:?} txs={:?}",
@@ -979,8 +953,7 @@ fn stylus_root_length_mismatch_reverts_on_both() {
         steps,
     };
 
-    let raw = rig.dual.run(&scenario).expect("dual run");
-    let report = filter_genesis_noise(raw);
+    let report = rig.dual.run(&scenario).expect("dual run");
     assert!(
         report.is_clean(),
         "mismatched root activation diverged from Nitro: blocks={:?} txs={:?}",
