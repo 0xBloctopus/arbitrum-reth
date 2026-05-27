@@ -1436,12 +1436,15 @@ where
                 false,
                 |addr| {
                     let db = &mut context.journaled_state.database;
-                    let info = db.basic(addr).ok().flatten().unwrap_or_default();
+                    let info = db
+                        .basic(addr)
+                        .map_err(|e| arb_stylus::StylusError::Backend(format!("{e:?}")))?
+                        .unwrap_or_default();
                     let code = match info.code {
                         Some(c) => c,
-                        None => db.code_by_hash(info.code_hash).map_err(|_| {
-                            arb_stylus::StylusError::InvalidProgram("fragment code unavailable")
-                        })?,
+                        None => db
+                            .code_by_hash(info.code_hash)
+                            .map_err(|e| arb_stylus::StylusError::Backend(format!("{e:?}")))?,
                     };
                     Ok(code.original_bytes().to_vec())
                 },
@@ -1451,6 +1454,17 @@ where
         };
         let decompressed = match decompressed_result {
             Ok(w) => w,
+            // A backing-store failure is an infrastructure error: abort rather
+            // than revert, so a transient read error can't pass as a bad program.
+            Err(arb_stylus::StylusError::Backend(e)) => {
+                tracing::error!(target: "stylus", codehash = %code_hash, err = %e, "fragment read failed");
+                write_pages(parent_open, start_ever);
+                return InterpreterResult::new(
+                    InstructionResult::FatalExternalError,
+                    Bytes::new(),
+                    zero_gas(),
+                );
+            }
             Err(e) => {
                 tracing::warn!(target: "stylus", codehash = %code_hash, err = %e, "WASM decompression failed");
                 write_pages(parent_open, start_ever);
