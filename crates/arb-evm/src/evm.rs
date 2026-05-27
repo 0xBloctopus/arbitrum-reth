@@ -2205,17 +2205,44 @@ where
 /// thread hand a freshly-built [`ArbPrecompileCtx`] to [`create_evm`] on
 /// another (reth's RPC dispatcher uses `spawn_blocking`). The executor
 /// path writes through the same slot before each block.
-#[derive(Default, Debug, Clone)]
+#[derive(Default, Debug)]
 pub struct ArbEvmFactory {
     pub inner: alloy_evm::EthEvmFactory,
     staged_ctx:
         std::sync::Arc<parking_lot::RwLock<Option<std::sync::Arc<arb_context::ArbPrecompileCtx>>>>,
     chain_caches: std::sync::Arc<arb_context::ChainCaches>,
+    /// When set, each clone gets its own staging slot; parallel offline
+    /// executors need the isolation, the live RPC handoff needs sharing.
+    isolate_staging_on_clone: bool,
+}
+
+impl Clone for ArbEvmFactory {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner,
+            staged_ctx: if self.isolate_staging_on_clone {
+                std::sync::Arc::default()
+            } else {
+                self.staged_ctx.clone()
+            },
+            chain_caches: self.chain_caches.clone(),
+            isolate_staging_on_clone: self.isolate_staging_on_clone,
+        }
+    }
 }
 
 impl ArbEvmFactory {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Factory whose clones each receive an independent staging slot, for
+    /// parallel offline block execution (`re-execute`/`import`/`stage`).
+    pub fn isolated() -> Self {
+        Self {
+            isolate_staging_on_clone: true,
+            ..Self::default()
+        }
     }
 
     /// Stage the per-block context that `create_evm` will install on the
@@ -2312,5 +2339,28 @@ impl EvmFactory for ArbEvmFactory {
     ) -> Self::Evm<DB, I> {
         let eth_evm = self.inner.create_evm_with_inspector(db, input, inspector);
         build_arb_evm(eth_evm.into_inner(), self.staged(), true)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ArbEvmFactory;
+    use std::sync::Arc;
+
+    #[test]
+    fn isolated_clone_has_independent_staging() {
+        let factory = ArbEvmFactory::isolated();
+        let clone = factory.clone();
+        factory.stage_ctx(Arc::new(arb_context::ArbPrecompileCtx::default()));
+        assert!(factory.staged().is_some());
+        assert!(clone.staged().is_none());
+    }
+
+    #[test]
+    fn default_clone_shares_staging() {
+        let factory = ArbEvmFactory::new();
+        let clone = factory.clone();
+        factory.stage_ctx(Arc::new(arb_context::ArbPrecompileCtx::default()));
+        assert!(clone.staged().is_some());
     }
 }
