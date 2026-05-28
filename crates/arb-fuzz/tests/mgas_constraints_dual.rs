@@ -1462,3 +1462,102 @@ fn stylus_to_solidity_write_constraint_matches_nitro() {
          reached StorageAccessWrite"
     );
 }
+
+/// An ArbOwner setter executed repeatedly under a write-weighted constraint must
+/// track the reference: its ArbOS state writes do not grow the per-resource write
+/// backlog, so the base fee stays at the floor and every call remains affordable.
+#[test]
+#[ignore]
+fn precompile_write_constraint_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(20u64)),
+        l1_block_number: 1,
+        timestamp: 1_700_000_000,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    let cons = set_constraint_calldata(60, 100_000, 0, KIND_STORAGE_WRITE, 10_000);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), cons, 2_000_000, 0)
+            .build()
+            .expect("set constraint"),
+        1,
+    ));
+
+    let mut nonce = 1u64;
+    let mut ts = 1_700_000_010u64;
+    for v in [1u64, 2, 3, 4, 5, 6, 7, 8] {
+        let mut set_price = selector4("setL1PricePerUnit(uint256)").to_vec();
+        set_price.extend_from_slice(&word(v));
+        let mut b = owner_tx_l1(nonce, Some(ARBOWNER), set_price, 2_000_000, 0);
+        b.timestamp = ts;
+        let i = idx.next();
+        steps.push(msg_step(i, b.build().expect("set price"), 1));
+        nonce += 1;
+        ts += 10;
+    }
+
+    let scenario = Scenario {
+        name: "precompile_write_constraint".into(),
+        description: "ArbOwner setter SSTORE grows the write backlog".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let report = rig.dual.run(&scenario).expect("dual run");
+    assert!(
+        report.is_clean(),
+        "precompile write diverged under active write constraint: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    let nonce_after = rig.dual.right.nonce(owner, BlockId::Latest).expect("nonce");
+    assert!(
+        nonce_after >= 9,
+        "owner setter txs did not all execute (nonce {nonce_after})"
+    );
+
+    let base_fee_call = TxRequest {
+        from: Some(owner),
+        to: Some(ARBGASINFO),
+        data: Some(Bytes::from(selector4("getMultiGasBaseFee()").to_vec())),
+        value: Some(U256::ZERO),
+        gas: Some(3_000_000),
+    };
+    let l = rig
+        .dual
+        .left
+        .eth_call(base_fee_call.clone(), BlockId::Latest)
+        .ok();
+    let r = rig.dual.right.eth_call(base_fee_call, BlockId::Latest).ok();
+    assert_eq!(
+        l, r,
+        "getMultiGasBaseFee diverged: nitro={l:?} arbreth={r:?}"
+    );
+    let fees = decode_uint256_array(&r.expect("base fee bytes"));
+    let floor = fees.first().copied().unwrap_or(U256::ZERO);
+    assert!(
+        fees.iter().all(|f| *f == floor),
+        "a resource base fee escalated; owner setter writes must not grow the backlog: {fees:?}"
+    );
+}
