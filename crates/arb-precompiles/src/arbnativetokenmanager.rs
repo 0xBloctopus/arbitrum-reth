@@ -49,9 +49,11 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 
     use IArbNativeTokenManager::ArbNativeTokenManagerCalls;
     let result = match call {
-        ArbNativeTokenManagerCalls::mintNativeToken(c) => handle_mint(&mut input, c.amount, ctx),
+        ArbNativeTokenManagerCalls::mintNativeToken(c) => {
+            handle_mint(&mut input, &mut gas_used, c.amount, ctx)
+        }
         ArbNativeTokenManagerCalls::burnNativeToken(c) => {
-            handle_burn(&mut input, gas_used, c.amount, ctx)
+            handle_burn(&mut input, &mut gas_used, c.amount, ctx)
         }
     };
     crate::gas_check(ctx, gas_limit, gas_used, result)
@@ -86,6 +88,7 @@ fn is_native_token_owner(
 
 fn handle_mint(
     input: &mut PrecompileInput<'_>,
+    gas_used: &mut u64,
     amount: U256,
     ctx: &ArbPrecompileCtx,
 ) -> PrecompileResult {
@@ -94,7 +97,6 @@ fn handle_mint(
     load_arbos(input)?;
 
     if !is_native_token_owner(input, caller, ctx)? {
-        // Burn-out on unauthorized: consume all gas, not a soft revert.
         return crate::burn_all_revert(gas_limit);
     }
 
@@ -114,13 +116,18 @@ fn handle_mint(
         event_data.into(),
     ));
 
-    let gas_cost = (SLOAD_GAS + SLOAD_GAS + MINT_BURN_GAS + EVENT_GAS + COPY_GAS).min(gas_limit);
-    Ok(PrecompileOutput::new(gas_cost, vec![].into()))
+    crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
+    crate::charge_computation(gas_used, ctx, MINT_BURN_GAS);
+    crate::charge_history_growth(gas_used, ctx, EVENT_GAS);
+    Ok(PrecompileOutput::new(
+        (*gas_used).min(gas_limit),
+        vec![].into(),
+    ))
 }
 
 fn handle_burn(
     input: &mut PrecompileInput<'_>,
-    gas_used: u64,
+    gas_used: &mut u64,
     amount: U256,
     ctx: &ArbPrecompileCtx,
 ) -> PrecompileResult {
@@ -129,7 +136,6 @@ fn handle_burn(
     load_arbos(input)?;
 
     if !is_native_token_owner(input, caller, ctx)? {
-        // Burn-out on unauthorized: consume all gas.
         return crate::burn_all_revert(gas_limit);
     }
 
@@ -140,11 +146,10 @@ fn handle_burn(
     let current_balance = acct.data.info.balance;
 
     if current_balance < amount {
-        // The membership read and mint/burn charge are taken before the balance
-        // check, so an over-burn reverts having paid them.
-        let revert_gas = (gas_used + SLOAD_GAS + MINT_BURN_GAS).min(gas_limit);
+        crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
+        crate::charge_computation(gas_used, ctx, MINT_BURN_GAS);
         return Ok(PrecompileOutput::new_reverted(
-            revert_gas,
+            (*gas_used).min(gas_limit),
             Default::default(),
         ));
     }
@@ -166,6 +171,11 @@ fn handle_burn(
         event_data.into(),
     ));
 
-    let gas_cost = (SLOAD_GAS + SLOAD_GAS + MINT_BURN_GAS + EVENT_GAS + COPY_GAS).min(gas_limit);
-    Ok(PrecompileOutput::new(gas_cost, vec![].into()))
+    crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
+    crate::charge_computation(gas_used, ctx, MINT_BURN_GAS);
+    crate::charge_history_growth(gas_used, ctx, EVENT_GAS);
+    Ok(PrecompileOutput::new(
+        (*gas_used).min(gas_limit),
+        vec![].into(),
+    ))
 }
