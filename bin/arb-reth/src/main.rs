@@ -32,8 +32,10 @@ fn main() {
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
     }
 
-    if std::env::args().nth(1).as_deref() == Some("re-execute") {
-        if let Err(err) = run_re_execute() {
+    // These offline commands run through Arbitrum-aware paths (see `commands`).
+    // Every other subcommand is dispatched by reth.
+    if let Some(sub @ ("re-execute" | "repair")) = std::env::args().nth(1).as_deref() {
+        if let Err(err) = run_offline(sub) {
             eprintln!("Error: {err:?}");
             std::process::exit(1);
         }
@@ -60,17 +62,27 @@ fn main() {
     }
 }
 
-fn run_re_execute() -> eyre::Result<()> {
-    // Strip the `re-execute` subcommand token before clap parses the flags-only struct.
+fn run_offline(sub: &str) -> eyre::Result<()> {
+    // Strip the subcommand token before clap parses the flags-only struct.
     let mut args = std::env::args_os();
     let bin = args.next().unwrap_or_default();
     let _ = args.next();
-    let argv = std::iter::once(bin).chain(args);
-    let cmd = commands::re_execute::Command::<ArbChainSpecParser>::parse_from(argv);
+    let argv: Vec<_> = std::iter::once(bin).chain(args).collect();
 
     let _guard = RethTracer::new().init().ok().flatten();
 
     let runner = CliRunner::try_default_runtime()?;
     let runtime = runner.runtime();
-    runner.run_until_ctrl_c(cmd.execute::<ArbNode>(cli_components, runtime))
+
+    match sub {
+        "re-execute" => {
+            let cmd = commands::re_execute::Command::<ArbChainSpecParser>::parse_from(argv);
+            runner.run_until_ctrl_c(cmd.execute::<ArbNode>(cli_components, runtime))
+        }
+        "repair" => {
+            let cmd = commands::repair::Command::<ArbChainSpecParser>::parse_from(argv);
+            runner.run_until_ctrl_c(cmd.execute::<ArbNode>(cli_components, runtime))
+        }
+        _ => unreachable!("dispatched only for known offline subcommands"),
+    }
 }
