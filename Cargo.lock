@@ -1163,6 +1163,7 @@ dependencies = [
  "arbos",
  "k256",
  "reth-chainspec",
+ "reth-db-api",
  "reth-evm",
  "reth-primitives-traits",
  "reth-revm",
@@ -1170,6 +1171,8 @@ dependencies = [
  "revm",
  "revm-database-interface",
  "revm-state",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
