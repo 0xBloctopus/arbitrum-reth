@@ -2257,23 +2257,25 @@ where
             U256::ZERO
         };
 
-        // EVM opcode gas comes from the inspector, Stylus host gas from the
-        // per-tx accumulator; both carry their own dimensions. The intrinsic is
-        // added here. Whatever the dimensioned amounts don't cover (precompile
-        // execution) is folded into computation as the remainder, so the split
-        // totals evm_gas_used. Poster gas is added separately.
+        // EVM opcode gas comes from the inspector, Stylus host gas and
+        // dimensioned precompile gas from the per-tx accumulators; each carries
+        // its own dimensions. The intrinsic is added here. Whatever the
+        // dimensioned amounts don't cover is folded into computation as the
+        // remainder, so the split totals evm_gas_used. Poster gas is separate.
         let stylus_multi_gas = self.precompile_ctx.stylus_multi_gas();
+        let precompile_multi_gas = self.precompile_ctx.precompile_multi_gas();
+        let dimensioned = stylus_multi_gas.saturating_add(precompile_multi_gas);
         let execution_multi_gas = match self.multi_gas_sink.lock().take() {
             Some(opcode_gas) => {
                 let observed = intrinsic_multi_gas
                     .saturating_add(opcode_gas)
-                    .saturating_add(stylus_multi_gas);
+                    .saturating_add(dimensioned);
                 let remainder = evm_gas_used.saturating_sub(observed.single_gas());
                 observed.saturating_add(MultiGas::computation_gas(remainder))
             }
             None => {
-                let remainder = evm_gas_used.saturating_sub(stylus_multi_gas.single_gas());
-                stylus_multi_gas.saturating_add(MultiGas::computation_gas(remainder))
+                let remainder = evm_gas_used.saturating_sub(dimensioned.single_gas());
+                dimensioned.saturating_add(MultiGas::computation_gas(remainder))
             }
         };
         let mut charged_multi_gas =

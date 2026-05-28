@@ -1115,14 +1115,27 @@ where
         revm::interpreter::Instruction::new(arb_selfbalance, 5),
     );
 
+    // Attribute this EVM sub-frame's opcodes by multi-gas dimension so a Stylus
+    // contract calling Solidity prices the callee's storage/log gas like the EVM
+    // would. Sub-calls dispatched below surface as `NewFrame`; their forwarded
+    // gas is stripped via the inspector's call/create hooks and attributed by
+    // the callee frame.
+    let mut multi_gas_inspector = crate::multi_gas::MultiGasInspector::default();
     loop {
-        let action = interpreter.run_plain(&instructions.instruction_table, context);
+        let action = revm::inspector::inspect_instructions(
+            context,
+            &mut interpreter,
+            &mut multi_gas_inspector,
+            &instructions.instruction_table,
+        );
 
         match action {
             InterpreterAction::Return(result) => {
+                pre_ctx.add_stylus_multi_gas(multi_gas_inspector.take_multi_gas());
                 return result;
             }
-            InterpreterAction::NewFrame(FrameInput::Call(sub_call)) => {
+            InterpreterAction::NewFrame(FrameInput::Call(mut sub_call)) => {
+                revm::Inspector::call(&mut multi_gas_inspector, context, &mut sub_call);
                 // Dispatch nested call through our trampoline.
                 // For DELEGATECALL, target_address is the storage context (preserved
                 // from parent), and caller is the msg.sender (preserved). For
@@ -1212,7 +1225,8 @@ where
                     interpreter.gas.record_refund(sub_result.refund);
                 }
             }
-            InterpreterAction::NewFrame(FrameInput::Create(sub_create)) => {
+            InterpreterAction::NewFrame(FrameInput::Create(mut sub_create)) => {
+                revm::Inspector::create(&mut multi_gas_inspector, context, &mut sub_create);
                 // Dispatch create through our trampoline
                 let salt = match sub_create.scheme() {
                     revm::interpreter::CreateScheme::Create2 { salt } => {
@@ -1260,6 +1274,7 @@ where
                 }
             }
             InterpreterAction::NewFrame(FrameInput::Empty) => {
+                pre_ctx.add_stylus_multi_gas(multi_gas_inspector.take_multi_gas());
                 return InterpreterResult::new(
                     InstructionResult::Revert,
                     Bytes::new(),

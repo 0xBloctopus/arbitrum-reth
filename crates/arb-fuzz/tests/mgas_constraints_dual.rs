@@ -23,7 +23,10 @@ use std::sync::{
 static SERIAL: Mutex<()> = Mutex::new(());
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
-use arb_fuzz::{arbitrary_impls::interop::wrap_init_code, scaffolding::selector4};
+use arb_fuzz::{
+    arbitrary_impls::interop::{wrap_init_code, WhichProgram},
+    scaffolding::selector4,
+};
 use arb_test_harness::{
     dual_exec::DualExec,
     genesis::GenesisBuilder,
@@ -53,8 +56,14 @@ const ARBGASINFO: Address = Address::new([
 ]);
 const FUNDER: Address = Address::new([0xa1; 20]);
 
+/// StorageAccessRead resource kind (`ResourceKind` discriminant).
+const KIND_STORAGE_READ: u8 = 3;
 /// StorageAccessWrite resource kind (`ResourceKind` discriminant).
 const KIND_STORAGE_WRITE: u8 = 4;
+/// ArbAddressTable precompile address (0x66).
+const ARBADDRESSTABLE: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x66,
+]);
 
 fn owner_key() -> B256 {
     B256::repeat_byte(0x42)
@@ -1285,5 +1294,407 @@ fn stylus_wasm_computation_constraint_matches_nitro() {
         max_fee > floor,
         "WasmComputation base fee did not escalate above floor {floor}; Stylus gas \
          never reached the WasmComputation dimension"
+    );
+}
+
+/// `forward(address,bytes)` calldata for the `sol_caller` Stylus program: it
+/// `CALL`s `target` with `inner`.
+fn forward_calldata(target: Address, inner: &[u8]) -> Vec<u8> {
+    let mut out = selector4("forward(address,bytes)").to_vec();
+    out.extend_from_slice(&word_addr(target));
+    out.extend_from_slice(&word(0x40));
+    out.extend_from_slice(&word(inner.len() as u64));
+    out.extend_from_slice(inner);
+    while out.len() % 32 != 0 {
+        out.push(0);
+    }
+    out
+}
+
+/// A Stylus program calling a Solidity contract that writes storage must
+/// attribute the callee's SSTORE gas to StorageAccessWrite, identically to
+/// Nitro. Without per-frame propagation the sub-call gas falls into computation
+/// and the write backlog diverges.
+#[test]
+#[ignore]
+fn stylus_to_solidity_write_constraint_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(21u64)),
+        l1_block_number: 1,
+        timestamp: 1_700_000_000,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    let mut set_price = selector4("setL1PricePerUnit(uint256)").to_vec();
+    set_price.extend_from_slice(&word(0));
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), set_price, 2_000_000, 0)
+            .build()
+            .expect("set price"),
+        1,
+    ));
+
+    let cons = set_constraint_calldata(60, 100_000, 0, KIND_STORAGE_WRITE, 10_000);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(1, Some(ARBOWNER), cons, 2_000_000, 0)
+            .build()
+            .expect("set constraint"),
+        1,
+    ));
+
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(2, None, WhichProgram::SolCaller.initcode(), 500_000_000, 0)
+            .build()
+            .expect("deploy sol_caller"),
+        1,
+    ));
+    let sol_caller = create_address(owner, 2);
+
+    let mut act = selector4("activateProgram(address)").to_vec();
+    act.extend_from_slice(&word_addr(sol_caller));
+    let mut activate_b = owner_tx_l1(3, Some(ARBWASM), act, 200_000_000, 0);
+    activate_b.value = U256::from(10u128).pow(U256::from(18u64));
+    activate_b.timestamp = 1_700_000_010;
+    let act_idx = idx.next();
+    steps.push(msg_step(act_idx, activate_b.build().expect("activate"), 1));
+
+    let mut helper_b = owner_tx_l1(4, None, wrap_init_code(&SSTORE_RUNTIME), 5_000_000, 0);
+    helper_b.timestamp = 1_700_000_020;
+    let i = idx.next();
+    steps.push(msg_step(i, helper_b.build().expect("deploy helper"), 1));
+    let helper = create_address(owner, 4);
+
+    // First write creates slot 0; the rest are resets pricing into
+    // StorageAccessWrite, reached through the Stylus -> Solidity sub-call.
+    let mut nonce = 5u64;
+    let mut ts = 1_700_000_030u64;
+    for v in [1u64, 2, 3, 4] {
+        let cd = forward_calldata(helper, &word(v));
+        let mut b = owner_tx_l1(nonce, Some(sol_caller), cd, 50_000_000, 0);
+        b.timestamp = ts;
+        let i = idx.next();
+        steps.push(msg_step(i, b.build().expect("forward"), 1));
+        nonce += 1;
+        ts += 10;
+    }
+
+    let scenario = Scenario {
+        name: "stylus_to_solidity_write".into(),
+        description: "Stylus -> Solidity SSTORE grows the write backlog".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let report = rig.dual.run(&scenario).expect("dual run");
+    assert!(
+        report.is_clean(),
+        "Stylus -> Solidity diverged under active write constraint: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    let sc_code = rig
+        .dual
+        .right
+        .code(sol_caller, BlockId::Latest)
+        .expect("code");
+    assert!(!sc_code.is_empty(), "sol_caller did not deploy");
+    let helper_code = rig.dual.right.code(helper, BlockId::Latest).expect("code");
+    assert!(!helper_code.is_empty(), "helper did not deploy");
+
+    let base_fee_call = TxRequest {
+        from: Some(owner),
+        to: Some(ARBGASINFO),
+        data: Some(Bytes::from(selector4("getMultiGasBaseFee()").to_vec())),
+        value: Some(U256::ZERO),
+        gas: Some(3_000_000),
+    };
+    let l = rig
+        .dual
+        .left
+        .eth_call(base_fee_call.clone(), BlockId::Latest)
+        .ok();
+    let r = rig.dual.right.eth_call(base_fee_call, BlockId::Latest).ok();
+    assert_eq!(
+        l, r,
+        "getMultiGasBaseFee diverged: nitro={l:?} arbreth={r:?}"
+    );
+
+    let fees = decode_uint256_array(&r.expect("base fee bytes"));
+    let floor = rig
+        .dual
+        .right
+        .eth_call(
+            TxRequest {
+                from: Some(owner),
+                to: Some(ARBGASINFO),
+                data: Some(Bytes::from(selector4("getMinimumGasPrice()").to_vec())),
+                value: Some(U256::ZERO),
+                gas: Some(3_000_000),
+            },
+            BlockId::Latest,
+        )
+        .ok()
+        .map(|b| U256::from_be_slice(&b))
+        .unwrap_or(U256::ZERO);
+    let max_fee = fees.iter().copied().max().unwrap_or(U256::ZERO);
+    eprintln!("[stylus->sol] floor={floor} max_fee={max_fee} fees={fees:?}");
+    assert!(
+        max_fee > floor,
+        "write base fee did not escalate; the Stylus -> Solidity SSTORE gas never \
+         reached StorageAccessWrite"
+    );
+}
+
+/// An ArbOwner setter executed repeatedly under a write-weighted constraint must
+/// track the reference: its ArbOS state writes do not grow the per-resource write
+/// backlog, so the base fee stays at the floor and every call remains affordable.
+#[test]
+#[ignore]
+fn precompile_write_constraint_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(20u64)),
+        l1_block_number: 1,
+        timestamp: 1_700_000_000,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    let cons = set_constraint_calldata(60, 100_000, 0, KIND_STORAGE_WRITE, 10_000);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), cons, 2_000_000, 0)
+            .build()
+            .expect("set constraint"),
+        1,
+    ));
+
+    let mut nonce = 1u64;
+    let mut ts = 1_700_000_010u64;
+    for v in [1u64, 2, 3, 4, 5, 6, 7, 8] {
+        let mut set_price = selector4("setL1PricePerUnit(uint256)").to_vec();
+        set_price.extend_from_slice(&word(v));
+        let mut b = owner_tx_l1(nonce, Some(ARBOWNER), set_price, 2_000_000, 0);
+        b.timestamp = ts;
+        let i = idx.next();
+        steps.push(msg_step(i, b.build().expect("set price"), 1));
+        nonce += 1;
+        ts += 10;
+    }
+
+    let scenario = Scenario {
+        name: "precompile_write_constraint".into(),
+        description: "ArbOwner setter SSTORE grows the write backlog".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let report = rig.dual.run(&scenario).expect("dual run");
+    assert!(
+        report.is_clean(),
+        "precompile write diverged under active write constraint: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    let nonce_after = rig.dual.right.nonce(owner, BlockId::Latest).expect("nonce");
+    assert!(
+        nonce_after >= 9,
+        "owner setter txs did not all execute (nonce {nonce_after})"
+    );
+
+    let base_fee_call = TxRequest {
+        from: Some(owner),
+        to: Some(ARBGASINFO),
+        data: Some(Bytes::from(selector4("getMultiGasBaseFee()").to_vec())),
+        value: Some(U256::ZERO),
+        gas: Some(3_000_000),
+    };
+    let l = rig
+        .dual
+        .left
+        .eth_call(base_fee_call.clone(), BlockId::Latest)
+        .ok();
+    let r = rig.dual.right.eth_call(base_fee_call, BlockId::Latest).ok();
+    assert_eq!(
+        l, r,
+        "getMultiGasBaseFee diverged: nitro={l:?} arbreth={r:?}"
+    );
+    let fees = decode_uint256_array(&r.expect("base fee bytes"));
+    let floor = fees.first().copied().unwrap_or(U256::ZERO);
+    assert!(
+        fees.iter().all(|f| *f == floor),
+        "a resource base fee escalated; owner setter writes must not grow the backlog: {fees:?}"
+    );
+
+    let price_call = TxRequest {
+        from: Some(owner),
+        to: Some(ARBGASINFO),
+        data: Some(Bytes::from(selector4("getL1BaseFeeEstimate()").to_vec())),
+        value: Some(U256::ZERO),
+        gas: Some(3_000_000),
+    };
+    let price = rig
+        .dual
+        .right
+        .eth_call(price_call, BlockId::Latest)
+        .expect("price call");
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(&price[..32]);
+    let stored = U256::from_be_bytes(buf);
+    assert_eq!(
+        stored,
+        U256::from(8u64),
+        "setL1PricePerUnit setters did not take effect (stored={stored}); the test is hollow"
+    );
+}
+
+/// A non-owner state-reading precompile (`ArbAddressTable.addressExists`)
+/// charges two storage reads per call; under a read-weighted constraint the
+/// reference grows the per-resource read backlog and the read base fee
+/// escalates. arbreth must do the same — lumping precompile reads into
+/// computation makes the read backlog stay flat and diverge from the
+/// reference's escalation.
+#[test]
+#[ignore]
+fn precompile_read_constraint_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(20u64)),
+        l1_block_number: 1,
+        timestamp: 1_700_000_000,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    let cons = set_constraint_calldata(60, 100_000, 0, KIND_STORAGE_READ, 10_000);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), cons, 2_000_000, 0)
+            .build()
+            .expect("set constraint"),
+        1,
+    ));
+
+    let probe = Address::new([0xbe; 20]);
+    let mut probe_word = [0u8; 32];
+    probe_word[12..].copy_from_slice(probe.as_slice());
+
+    let mut nonce = 1u64;
+    let mut ts = 1_700_000_010u64;
+    for _ in 0..8u32 {
+        let mut data = selector4("addressExists(address)").to_vec();
+        data.extend_from_slice(&probe_word);
+        let mut b = owner_tx_l1(nonce, Some(ARBADDRESSTABLE), data, 2_000_000, 0);
+        b.timestamp = ts;
+        let i = idx.next();
+        steps.push(msg_step(i, b.build().expect("addressExists"), 1));
+        nonce += 1;
+        ts += 10;
+    }
+
+    let scenario = Scenario {
+        name: "precompile_read_constraint".into(),
+        description: "ArbAddressTable.addressExists feeds the read backlog".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let report = rig.dual.run(&scenario).expect("dual run");
+    assert!(
+        report.is_clean(),
+        "non-owner precompile reads diverged under active read constraint: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    let nonce_after = rig.dual.right.nonce(owner, BlockId::Latest).expect("nonce");
+    assert!(
+        nonce_after >= 2,
+        "no addressExists tx executed (nonce {nonce_after}); the test is hollow"
+    );
+
+    let base_fee_call = TxRequest {
+        from: Some(owner),
+        to: Some(ARBGASINFO),
+        data: Some(Bytes::from(selector4("getMultiGasBaseFee()").to_vec())),
+        value: Some(U256::ZERO),
+        gas: Some(3_000_000),
+    };
+    let l = rig
+        .dual
+        .left
+        .eth_call(base_fee_call.clone(), BlockId::Latest)
+        .ok();
+    let r = rig.dual.right.eth_call(base_fee_call, BlockId::Latest).ok();
+    assert_eq!(
+        l, r,
+        "getMultiGasBaseFee diverged: nitro={l:?} arbreth={r:?}"
+    );
+    let fees = decode_uint256_array(&r.expect("base fee bytes"));
+    let floor = fees.first().copied().unwrap_or(U256::ZERO);
+    let read_fee = fees
+        .get(KIND_STORAGE_READ as usize)
+        .copied()
+        .unwrap_or(U256::ZERO);
+    assert!(
+        read_fee > floor,
+        "read base fee did not escalate; non-owner precompile reads must feed StorageAccessRead: {fees:?}"
     );
 }
