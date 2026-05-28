@@ -92,6 +92,23 @@ fn read_slot<D: revm::Database>(
         .unwrap_or(U256::ZERO)
 }
 
+/// Read a slot from the committed bundle (plain) state — what re-execution
+/// reads back and what the state root is computed from. A write that lands in
+/// the cache but not here is invisible to the next block and to the root.
+fn read_bundle_slot<D: revm::Database>(
+    state: &revm::database::State<D>,
+    addr: Address,
+    slot: U256,
+) -> U256 {
+    state
+        .bundle_state
+        .state
+        .get(&addr)
+        .and_then(|a| a.storage.get(&slot))
+        .map(|s| s.present_value)
+        .unwrap_or(U256::ZERO)
+}
+
 #[test]
 fn v60_internal_tx_start_block_writes_canonical_slots() {
     let mut harness = ArbosHarness::new()
@@ -272,5 +289,45 @@ fn v60_internal_tx_start_block_writes_canonical_slots() {
         arbos_l2_basefee,
         U256::from(ARBOS_POST_L2_BASE_FEE),
         "ArbOS L2 base fee slot must update to 0x{ARBOS_POST_L2_BASE_FEE:x}, got {arbos_l2_basefee:x}",
+    );
+
+    // The writes above are visible in the cache. Re-execution reads the
+    // committed bundle (plain) state and roots from it: assert the same
+    // writes survive `merge_transitions(PlainState)`.
+    harness
+        .state()
+        .merge_transitions(revm::database::states::bundle_state::BundleRetention::PlainState);
+
+    let eip2935_bundle = read_bundle_slot(
+        harness.state(),
+        HISTORY_STORAGE_ADDRESS,
+        U256::from(EIP2935_SLOT_DECIMAL),
+    );
+    assert_eq!(
+        eip2935_bundle,
+        U256::from_be_bytes(PARENT_HASH.0),
+        "EIP-2935 write must persist to the bundle (got {eip2935_bundle:x})",
+    );
+
+    let arbos_l1_bundle = read_bundle_slot(
+        harness.state(),
+        ARBOS_STATE_ADDRESS,
+        U256::from_be_bytes(ARBOS_L1_BLOCK_SLOT.0),
+    );
+    assert_eq!(
+        arbos_l1_bundle,
+        U256::from(NEW_L1_BLOCK_NUMBER),
+        "ArbOS L1 block slot write must persist to the bundle (got {arbos_l1_bundle:x})",
+    );
+
+    let arbos_basefee_bundle = read_bundle_slot(
+        harness.state(),
+        ARBOS_STATE_ADDRESS,
+        U256::from_be_bytes(ARBOS_L2_BASE_FEE_SLOT.0),
+    );
+    assert_eq!(
+        arbos_basefee_bundle,
+        U256::from(ARBOS_POST_L2_BASE_FEE),
+        "ArbOS L2 base fee write must persist to the bundle (got {arbos_basefee_bundle:x})",
     );
 }
