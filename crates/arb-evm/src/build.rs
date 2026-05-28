@@ -2464,6 +2464,7 @@ where
                 let finalise_ptr = &self.finalise_deleted as *const rustc_hash::FxHashSet<Address>;
                 let overlay_ptr = &mut self.state_overlay as *mut StateOverlay;
                 let arbos_ver = self.arb_ctx.arbos_version;
+                let basefee_retry = self.arb_ctx.basefee;
 
                 let arb_state_retry = ArbosState::open(db, SystemBurner::new(None, false))
                     .map_err(BlockExecutionError::other)?;
@@ -2488,16 +2489,15 @@ where
                             .get_current_multi_gas_fees(state_ref)
                             .unwrap_or([U256::ZERO; NUM_RESOURCE_KIND])
                     });
-                    // SAFETY: see `Storage::state_mut()` invariant.
-                    let state_ref = unsafe { arb_state_retry.backing_storage.state_mut() };
-                    arb_state_retry
-                        .l2_pricing_state
-                        .multi_dimensional_price_for_refund_with_fees(
-                            state_ref,
-                            pending.charged_multi_gas,
-                            cached,
-                        )
-                        .ok()
+                    Some(
+                        arb_state_retry
+                            .l2_pricing_state
+                            .multi_dimensional_price_for_refund_with_fees(
+                                pending.charged_multi_gas,
+                                cached,
+                                basefee_retry,
+                            ),
+                    )
                 } else {
                     None
                 };
@@ -2751,37 +2751,33 @@ where
                                     .get_current_multi_gas_fees(state_ref)
                                     .unwrap_or([U256::ZERO; NUM_RESOURCE_KIND])
                             });
-                            // SAFETY: see `Storage::state_mut()` invariant.
-                            let state_ref = unsafe { arb_state_post.backing_storage.state_mut() };
-                            if let Ok(multi_cost) = arb_state_post
+                            let multi_cost = arb_state_post
                                 .l2_pricing_state
                                 .multi_dimensional_price_for_refund_with_fees(
-                                    state_ref,
                                     charged_multi_gas,
                                     cached,
-                                )
-                            {
-                                if total_cost > multi_cost {
-                                    let refund_amount = total_cost.saturating_sub(multi_cost);
-                                    let _ = arb_util::transfer_balance(
-                                        Some(&dist.network_fee_account),
-                                        Some(&pending.sender),
-                                        refund_amount,
-                                        |f, t, a| {
-                                            // SAFETY: see `Storage::state_mut()` invariant.
-                                            unsafe {
-                                                apply_balance_op(
-                                                    refund_storage.state_mut(),
-                                                    &mut *overlay_ptr,
-                                                    f,
-                                                    t,
-                                                    a,
-                                                )
-                                            }
-                                        },
-                                    );
-                                    refund_done = true;
-                                }
+                                    basefee_active,
+                                );
+                            if total_cost > multi_cost {
+                                let refund_amount = total_cost.saturating_sub(multi_cost);
+                                let _ = arb_util::transfer_balance(
+                                    Some(&dist.network_fee_account),
+                                    Some(&pending.sender),
+                                    refund_amount,
+                                    |f, t, a| {
+                                        // SAFETY: see `Storage::state_mut()` invariant.
+                                        unsafe {
+                                            apply_balance_op(
+                                                refund_storage.state_mut(),
+                                                &mut *overlay_ptr,
+                                                f,
+                                                t,
+                                                a,
+                                            )
+                                        }
+                                    },
+                                );
+                                refund_done = true;
                             }
                         }
 

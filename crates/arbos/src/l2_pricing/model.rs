@@ -479,16 +479,20 @@ impl<D: Database> L2PricingState<'_, D> {
 
     /// Variant of `multi_dimensional_price_for_refund` that uses precomputed
     /// current-block multi-gas fees (as returned by `get_current_multi_gas_fees`).
-    /// `base_fee_wei` is still read from state to handle rare mid-block
-    /// `setL2BaseFee` owner writes. Zero cached values are substituted with the
-    /// live base_fee, matching `get_multi_gas_base_fee_per_resource` exactly.
-    pub fn multi_dimensional_price_for_refund_with_fees<B: SystemStateBackend>(
+    ///
+    /// `block_base_fee` is the base fee the transaction was charged at for the
+    /// block being executed. It is supplied by the caller rather than read from
+    /// storage because the `startBlock` update writes the *next* block's base
+    /// fee into the slot before user transactions run; reconciling the refund
+    /// against the slot would value single-dimensional and unpriced resources
+    /// at the wrong base fee. Zero cached values and single-dimensional gas are
+    /// valued at `block_base_fee`, matching the single-gas cost the sender paid.
+    pub fn multi_dimensional_price_for_refund_with_fees(
         &self,
-        backend: &mut B,
         gas_used: MultiGas,
         cached_fees: &[U256; NUM_RESOURCE_KIND],
-    ) -> Result<U256, L2PricingError> {
-        let base_fee = self.base_fee_wei(backend)?;
+        block_base_fee: U256,
+    ) -> U256 {
         let mut total = U256::ZERO;
         for kind in ResourceKind::ALL {
             let amount = gas_used.get(kind);
@@ -496,18 +500,18 @@ impl<D: Database> L2PricingState<'_, D> {
                 continue;
             }
             let fee = if kind == ResourceKind::SingleDim {
-                base_fee
+                block_base_fee
             } else {
                 let cached = cached_fees[kind as usize];
                 if cached.is_zero() {
-                    base_fee
+                    block_base_fee
                 } else {
                     cached
                 }
             };
             total = total.saturating_add(U256::from(amount).saturating_mul(fee));
         }
-        Ok(total)
+        total
     }
 }
 
