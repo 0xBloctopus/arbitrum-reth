@@ -88,11 +88,30 @@ impl StateOverlay {
                 continue;
             }
 
-            let was_non_existing = entry.previous_info.is_none()
-                || matches!(
-                    entry.previous_status,
-                    CacheAccountStatus::LoadedNotExisting | CacheAccountStatus::LoadedEmptyEIP161
-                );
+            // The emitted transition must be a valid successor of the status
+            // the bundle already holds for this account. Within a multi-block
+            // batch the cache can be evicted while the bundle keeps an account
+            // as `Changed`/`InMemoryChange`; the cache snapshot alone is not
+            // authoritative, so prefer the bundle status when present.
+            let base_status = state
+                .bundle_state
+                .state
+                .get(&addr)
+                .map(|b| b.status)
+                .unwrap_or(entry.previous_status);
+            let live_in_bundle = state
+                .bundle_state
+                .state
+                .get(&addr)
+                .is_some_and(|b| b.info.is_some());
+
+            let was_non_existing = !live_in_bundle
+                && (entry.previous_info.is_none()
+                    || matches!(
+                        base_status,
+                        CacheAccountStatus::LoadedNotExisting
+                            | CacheAccountStatus::LoadedEmptyEIP161
+                    ));
 
             if was_non_existing && !cur_empty {
                 let mut account = Account {
@@ -106,21 +125,18 @@ impl StateOverlay {
                 continue;
             }
 
-            let new_status = match (pre_empty, cur_empty) {
-                (true, false) => match entry.previous_status {
-                    CacheAccountStatus::Destroyed
-                    | CacheAccountStatus::DestroyedAgain
-                    | CacheAccountStatus::DestroyedChanged => CacheAccountStatus::DestroyedChanged,
-                    _ => CacheAccountStatus::InMemoryChange,
-                },
-                (false, true) => match entry.previous_status {
+            // Non-empty result keeps the account live: map the base status to
+            // its modified successor. Empty result deletes it (EIP-161).
+            let new_status = if cur_empty {
+                match base_status {
                     CacheAccountStatus::LoadedNotExisting => continue,
                     CacheAccountStatus::DestroyedAgain | CacheAccountStatus::DestroyedChanged => {
                         CacheAccountStatus::DestroyedAgain
                     }
                     _ => CacheAccountStatus::Destroyed,
-                },
-                (false, false) => match entry.previous_status {
+                }
+            } else {
+                match base_status {
                     CacheAccountStatus::Loaded => CacheAccountStatus::Changed,
                     CacheAccountStatus::LoadedNotExisting
                     | CacheAccountStatus::LoadedEmptyEIP161 => CacheAccountStatus::InMemoryChange,
@@ -128,8 +144,7 @@ impl StateOverlay {
                     | CacheAccountStatus::Destroyed
                     | CacheAccountStatus::DestroyedChanged => CacheAccountStatus::DestroyedChanged,
                     other => other,
-                },
-                (true, true) => unreachable!(),
+                }
             };
 
             let goes_destroyed = matches!(
@@ -257,6 +272,122 @@ mod tests {
             .and_then(|a| a.info.as_ref())
             .map(|i| i.balance);
         assert_eq!(bundled, Some(U256::from(42u64)));
+    }
+
+    fn credit<DB: Database>(
+        state: &mut State<DB>,
+        overlay: &mut StateOverlay,
+        a: Address,
+        by: U256,
+    ) {
+        overlay.record_pre_touch(state, a);
+        let c = state.cache.accounts.get_mut(&a).unwrap();
+        match c.account.as_mut() {
+            Some(acct) => acct.info.balance += by,
+            None => {
+                c.account = Some(PlainAccount {
+                    info: AccountInfo {
+                        balance: by,
+                        ..Default::default()
+                    },
+                    storage: Default::default(),
+                })
+            }
+        }
+        overlay.drain_and_apply(state);
+        state.merge_transitions(BundleRetention::Reverts);
+        overlay.reset_tx();
+    }
+
+    #[test]
+    fn repro_fresh_credit_then_recredit_across_merges() {
+        let mut state = make_state();
+        let mut overlay = StateOverlay::new();
+        let a = address!("00000000000000000000000000000000feed0001");
+        credit(&mut state, &mut overlay, a, U256::from(1_000_000u64));
+        credit(&mut state, &mut overlay, a, U256::from(2_000_000u64));
+        let bal = state
+            .bundle_state
+            .state
+            .get(&a)
+            .and_then(|x| x.info.as_ref())
+            .map(|i| i.balance);
+        assert_eq!(bal, Some(U256::from(3_000_000u64)));
+    }
+
+    /// An account already established in the accumulated bundle (status
+    /// `Changed`) is re-credited after its cache entry has been evicted. The
+    /// overlay must emit a transition that is a valid successor of the bundle
+    /// status, not re-create it as `InMemoryChange` (which revm rejects).
+    #[test]
+    fn recredit_with_drifted_cache_status_stays_changed() {
+        let mut state = make_state();
+        let mut overlay = StateOverlay::new();
+        let a = address!("00000000000000000000000000000000feed0002");
+
+        // Pre-existing on-disk (Loaded) account credited once → bundle `Changed`.
+        state.cache.accounts.insert(
+            a,
+            CacheAccount {
+                account: Some(PlainAccount {
+                    info: AccountInfo {
+                        balance: U256::from(10u64),
+                        ..Default::default()
+                    },
+                    storage: Default::default(),
+                }),
+                status: CacheAccountStatus::Loaded,
+            },
+        );
+        credit(&mut state, &mut overlay, a, U256::from(1_000_000u64));
+        assert_eq!(
+            state.bundle_state.state.get(&a).map(|b| b.status),
+            Some(CacheAccountStatus::Changed)
+        );
+
+        // The cache status drifts to an "empty/non-existing" marker (e.g. via
+        // EIP-161 touch handling) while the account and the bundle keep it as a
+        // live `Changed` entry. Pre-fix this drove the overlay to emit an
+        // `InMemoryChange`/created transition, which revm rejects.
+        state.cache.accounts.get_mut(&a).unwrap().status = CacheAccountStatus::LoadedEmptyEIP161;
+
+        credit(&mut state, &mut overlay, a, U256::from(2_000_000u64));
+        let acct = state.bundle_state.state.get(&a).unwrap();
+        assert_eq!(acct.status, CacheAccountStatus::Changed);
+        assert_eq!(
+            acct.info.as_ref().map(|i| i.balance),
+            Some(U256::from(3_000_010u64))
+        );
+    }
+
+    #[test]
+    fn repro_loaded_credit_then_recredit_across_merges() {
+        let mut state = make_state();
+        let mut overlay = StateOverlay::new();
+        let a = address!("00000000000000000000000000000000feed0003");
+        // Pre-existing on-disk account (Loaded).
+        state.cache.accounts.insert(
+            a,
+            CacheAccount {
+                account: Some(PlainAccount {
+                    info: AccountInfo {
+                        balance: U256::from(10u64),
+                        ..Default::default()
+                    },
+                    storage: Default::default(),
+                }),
+                status: CacheAccountStatus::Loaded,
+            },
+        );
+        credit(&mut state, &mut overlay, a, U256::from(1_000_000u64));
+        credit(&mut state, &mut overlay, a, U256::from(1_000_000u64));
+        let bal = state
+            .bundle_state
+            .state
+            .get(&a)
+            .and_then(|x| x.info.as_ref())
+            .map(|i| i.balance);
+        assert_eq!(bal, Some(U256::from(2_000_010u64)));
     }
 
     #[test]
