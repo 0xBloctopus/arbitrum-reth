@@ -1560,4 +1560,25 @@ fn precompile_write_constraint_matches_nitro() {
         fees.iter().all(|f| *f == floor),
         "a resource base fee escalated; owner setter writes must not grow the backlog: {fees:?}"
     );
+
+    let price_call = TxRequest {
+        from: Some(owner),
+        to: Some(ARBGASINFO),
+        data: Some(Bytes::from(selector4("getL1BaseFeeEstimate()").to_vec())),
+        value: Some(U256::ZERO),
+        gas: Some(3_000_000),
+    };
+    let price = rig
+        .dual
+        .right
+        .eth_call(price_call, BlockId::Latest)
+        .expect("price call");
+    let mut buf = [0u8; 32];
+    buf.copy_from_slice(&price[..32]);
+    let stored = U256::from_be_bytes(buf);
+    assert_eq!(
+        stored,
+        U256::from(8u64),
+        "setL1PricePerUnit setters did not take effect (stored={stored}); the test is hollow"
+    );
 }
