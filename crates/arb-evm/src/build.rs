@@ -1397,8 +1397,6 @@ where
 
             let overlay = &mut self.state_overlay;
             let db: &mut State<DB> = self.inner.evm_mut().db_mut();
-            // Mint deposit value to sender, then transfer to recipient.
-            // The deposit mint always covers the value transfer that follows.
             let _ = arb_util::mint_balance(&sender, value, |f, t, a| {
                 apply_balance_op(db, overlay, f, t, a)
             });
