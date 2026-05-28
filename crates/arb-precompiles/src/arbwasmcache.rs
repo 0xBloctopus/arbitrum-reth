@@ -45,7 +45,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 
     let mut gas_used = 0u64;
     let gas_limit = input.gas;
-    crate::init_precompile_gas(&mut gas_used, input.data.len());
+    crate::init_precompile_gas(&mut gas_used, ctx, input.data.len());
 
     let call = match IArbWasmCache::ArbWasmCacheCalls::abi_decode(input.data) {
         Ok(c) => c,
@@ -274,14 +274,14 @@ fn set_program_cached(
             stylusVersion: params.version,
         }
         .abi_encode();
-        return crate::sol_error_revert(gas_used, data, input.gas);
+        return crate::sol_error_revert(gas_used, ctx, data, input.gas);
     }
     if cache && expired {
         let data = IArbWasm::ProgramExpired {
             ageInSeconds: program.age_seconds,
         }
         .abi_encode();
-        return crate::sol_error_revert(gas_used, data, input.gas);
+        return crate::sol_error_revert(gas_used, ctx, data, input.gas);
     }
     if already_cached == cache {
         return Ok(PrecompileOutput::new(

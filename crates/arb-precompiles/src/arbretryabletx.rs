@@ -57,7 +57,7 @@ pub fn create_arbretryabletx_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecom
 fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResult {
     let mut gas_used = 0u64;
     let gas_limit = input.gas;
-    crate::init_precompile_gas(&mut gas_used, input.data.len());
+    crate::init_precompile_gas(&mut gas_used, ctx, input.data.len());
 
     let call = match IArbRetryableTx::ArbRetryableTxCalls::abi_decode(input.data) {
         Ok(c) => c,
@@ -82,7 +82,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         }
         Calls::submitRetryable(_) => {
             let data = IArbRetryableTx::NotCallable {}.abi_encode();
-            return crate::sol_error_revert(&mut gas_used, data, gas_limit);
+            return crate::sol_error_revert(&mut gas_used, ctx, data, gas_limit);
         }
         Calls::getTimeout(c) => handle_get_timeout(&mut input, &mut gas_used, c.ticketId, ctx),
         Calls::getBeneficiary(c) => {
@@ -132,7 +132,7 @@ fn not_found_revert(
         return crate::burn_all_revert(gas_limit);
     }
     let data = IArbRetryableTx::NoTicketWithID {}.abi_encode();
-    crate::sol_error_revert(gas_used, data, gas_limit)
+    crate::sol_error_revert(gas_used, ctx, data, gas_limit)
 }
 
 fn handle_get_timeout(
@@ -159,7 +159,7 @@ fn handle_get_timeout(
         Err(RetryableError::NoTicketWithId) => {
             crate::charge_precompile_gas(gas_used, SLOAD_GAS);
             let data = IArbRetryableTx::NoTicketWithID {}.abi_encode();
-            return crate::sol_error_revert(gas_used, data, gas_limit);
+            return crate::sol_error_revert(gas_used, ctx, data, gas_limit);
         }
         Err(e) => return Err(map_retryable_error(e, *gas_used).into()),
     };

@@ -391,6 +391,20 @@ impl ArbPrecompileCtx {
         self.tx.lock().precompile_multi_gas
     }
 
+    /// Capture the current `precompile_multi_gas` so callers can later restore
+    /// it. Used by precompiles whose body gas is intentionally discarded at the
+    /// receipt (mirroring the reference, where access-controlled methods report
+    /// zero gas) so the per-dimension contributions they recorded are dropped
+    /// before the result is returned.
+    pub fn snapshot_precompile_multi_gas(&self) -> MultiGas {
+        self.tx.lock().precompile_multi_gas
+    }
+
+    /// Restore `precompile_multi_gas` to a previously captured snapshot.
+    pub fn restore_precompile_multi_gas(&self, snapshot: MultiGas) {
+        self.tx.lock().precompile_multi_gas = snapshot;
+    }
+
     /// Increment the reentrancy counter for `addr` and return `true` if this
     /// is a reentrant entry (counter was already > 0).
     pub fn push_stylus_program(&self, addr: Address) -> bool {

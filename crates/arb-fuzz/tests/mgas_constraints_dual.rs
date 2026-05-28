@@ -56,8 +56,14 @@ const ARBGASINFO: Address = Address::new([
 ]);
 const FUNDER: Address = Address::new([0xa1; 20]);
 
+/// StorageAccessRead resource kind (`ResourceKind` discriminant).
+const KIND_STORAGE_READ: u8 = 3;
 /// StorageAccessWrite resource kind (`ResourceKind` discriminant).
 const KIND_STORAGE_WRITE: u8 = 4;
+/// ArbAddressTable precompile address (0x66).
+const ARBADDRESSTABLE: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x66,
+]);
 
 fn owner_key() -> B256 {
     B256::repeat_byte(0x42)
@@ -1580,5 +1586,115 @@ fn precompile_write_constraint_matches_nitro() {
         stored,
         U256::from(8u64),
         "setL1PricePerUnit setters did not take effect (stored={stored}); the test is hollow"
+    );
+}
+
+/// A non-owner state-reading precompile (`ArbAddressTable.addressExists`)
+/// charges two storage reads per call; under a read-weighted constraint the
+/// reference grows the per-resource read backlog and the read base fee
+/// escalates. arbreth must do the same — lumping precompile reads into
+/// computation makes the read backlog stay flat and diverge from the
+/// reference's escalation.
+#[test]
+#[ignore]
+fn precompile_read_constraint_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let mut rig = Rig::spawn(owner);
+    let idx = Idx::new();
+    let mut steps = Vec::new();
+
+    let dep_idx = idx.next();
+    let dep = DepositBuilder {
+        from: FUNDER,
+        to: owner,
+        amount: U256::from(10u128).pow(U256::from(20u64)),
+        l1_block_number: 1,
+        timestamp: 1_700_000_000,
+        request_seq: dep_idx,
+        base_fee_l1: 0,
+    }
+    .build()
+    .expect("deposit");
+    steps.push(msg_step(dep_idx, dep, 1));
+
+    let cons = set_constraint_calldata(60, 100_000, 0, KIND_STORAGE_READ, 10_000);
+    let i = idx.next();
+    steps.push(msg_step(
+        i,
+        owner_tx_l1(0, Some(ARBOWNER), cons, 2_000_000, 0)
+            .build()
+            .expect("set constraint"),
+        1,
+    ));
+
+    let probe = Address::new([0xbe; 20]);
+    let mut probe_word = [0u8; 32];
+    probe_word[12..].copy_from_slice(probe.as_slice());
+
+    let mut nonce = 1u64;
+    let mut ts = 1_700_000_010u64;
+    for _ in 0..8u32 {
+        let mut data = selector4("addressExists(address)").to_vec();
+        data.extend_from_slice(&probe_word);
+        let mut b = owner_tx_l1(nonce, Some(ARBADDRESSTABLE), data, 2_000_000, 0);
+        b.timestamp = ts;
+        let i = idx.next();
+        steps.push(msg_step(i, b.build().expect("addressExists"), 1));
+        nonce += 1;
+        ts += 10;
+    }
+
+    let scenario = Scenario {
+        name: "precompile_read_constraint".into(),
+        description: "ArbAddressTable.addressExists feeds the read backlog".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let report = rig.dual.run(&scenario).expect("dual run");
+    assert!(
+        report.is_clean(),
+        "non-owner precompile reads diverged under active read constraint: blocks={:?} txs={:?}",
+        report.block_diffs,
+        report.tx_diffs,
+    );
+
+    let nonce_after = rig.dual.right.nonce(owner, BlockId::Latest).expect("nonce");
+    assert!(
+        nonce_after >= 2,
+        "no addressExists tx executed (nonce {nonce_after}); the test is hollow"
+    );
+
+    let base_fee_call = TxRequest {
+        from: Some(owner),
+        to: Some(ARBGASINFO),
+        data: Some(Bytes::from(selector4("getMultiGasBaseFee()").to_vec())),
+        value: Some(U256::ZERO),
+        gas: Some(3_000_000),
+    };
+    let l = rig
+        .dual
+        .left
+        .eth_call(base_fee_call.clone(), BlockId::Latest)
+        .ok();
+    let r = rig.dual.right.eth_call(base_fee_call, BlockId::Latest).ok();
+    assert_eq!(
+        l, r,
+        "getMultiGasBaseFee diverged: nitro={l:?} arbreth={r:?}"
+    );
+    let fees = decode_uint256_array(&r.expect("base fee bytes"));
+    let floor = fees.first().copied().unwrap_or(U256::ZERO);
+    let read_fee = fees
+        .get(KIND_STORAGE_READ as usize)
+        .copied()
+        .unwrap_or(U256::ZERO);
+    assert!(
+        read_fee > floor,
+        "read base fee did not escalate; non-owner precompile reads must feed StorageAccessRead: {fees:?}"
     );
 }

@@ -37,7 +37,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     if !ctx.block.allow_debug_precompiles {
         return crate::burn_all_revert(gas_limit);
     }
-    crate::init_precompile_gas(&mut gas_used, input.data.len());
+    crate::init_precompile_gas(&mut gas_used, ctx, input.data.len());
 
     let call = match IArbDebug::ArbDebugCalls::abi_decode(input.data) {
         Ok(c) => c,
@@ -54,12 +54,12 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         ArbDebugCalls::eventsView(_) => handle_events_view(&mut input, ctx, gas_used),
         ArbDebugCalls::customRevert(c) => {
             gas_used = 0;
-            crate::init_precompile_gas_pure(&mut gas_used, input_len);
-            handle_custom_revert(&mut gas_used, c.number, gas_limit)
+            crate::init_precompile_gas_pure(&mut gas_used, ctx, input_len);
+            handle_custom_revert(&mut gas_used, ctx, c.number, gas_limit)
         }
         ArbDebugCalls::legacyError(_) => {
             gas_used = 0;
-            crate::init_precompile_gas_pure(&mut gas_used, input_len);
+            crate::init_precompile_gas_pure(&mut gas_used, ctx, input_len);
             Err(ArbPrecompileError::empty_revert(gas_used).into())
         }
         ArbDebugCalls::panic(_) => {
@@ -188,14 +188,19 @@ fn handle_events_view(
     ))
 }
 
-fn handle_custom_revert(gas_used: &mut u64, number: u64, gas_limit: u64) -> PrecompileResult {
+fn handle_custom_revert(
+    gas_used: &mut u64,
+    ctx: &ArbPrecompileCtx,
+    number: u64,
+    gas_limit: u64,
+) -> PrecompileResult {
     let payload = IArbDebug::Custom {
         _0: number,
         _1: "This spider family wards off bugs: /\\oo/\\ //\\(oo)//\\ /\\oo/\\".to_string(),
         _2: true,
     }
     .abi_encode();
-    crate::sol_error_revert(gas_used, payload, gas_limit)
+    crate::sol_error_revert(gas_used, ctx, payload, gas_limit)
 }
 
 fn emit_basic_event(input: &mut PrecompileInput<'_>, flag: bool, value: B256) {
