@@ -1,10 +1,13 @@
 //! Re-execute blocks from the local archive in parallel.
 //!
 //! Mirrors `reth re-execute` (CLI, defaults, work-stealing, validation,
-//! diagnostics). Two structural differences: `BundleRetention::PlainState`
+//! diagnostics). Three structural differences: `BundleRetention::PlainState`
 //! retains plain state without per-block reverts so memory scales with
-//! unique cells touched, and the per-chunk executor lives for the chunk's
-//! full range — never recreated mid-chunk.
+//! unique cells touched; the per-chunk executor lives for the chunk's
+//! full range and is never recreated mid-chunk; and `--skip-invalid-blocks`
+//! abandons the rest of the chunk on the first invalid block instead of
+//! continuing with a now-stale bundle (which otherwise cascades into
+//! receipt divergence on every following block in the chunk).
 
 use alloy_consensus::{transaction::TxHashRef, BlockHeader, TxReceipt};
 use clap::Parser;
@@ -178,7 +181,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                             Err(err) => {
                                 if skip_invalid_blocks {
                                     let _ = info_tx.send((block, eyre::Report::new(err)));
-                                    continue 'blocks;
+                                    break 'blocks;
                                 }
                                 return Err(err.into());
                             }
@@ -232,7 +235,7 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                                         error!(number=?block.number(), ?mismatch, "Gas usage mismatch");
                                         if skip_invalid_blocks {
                                             let _ = info_tx.send((block, err));
-                                            continue 'blocks;
+                                            break 'blocks;
                                         }
                                         return Err(err);
                                     }
@@ -241,6 +244,10 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
                                 }
                             }
 
+                            if skip_invalid_blocks {
+                                let _ = info_tx.send((block, err));
+                                break 'blocks;
+                            }
                             return Err(err);
                         }
                         let _ = stats_tx.send(block.gas_used());
