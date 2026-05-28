@@ -1355,12 +1355,26 @@ dependencies = [
 name = "arb-reth"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "arb-node",
  "clap 4.5.60",
+ "eyre",
  "reth",
+ "reth-chainspec",
+ "reth-cli",
+ "reth-cli-commands",
  "reth-cli-util",
+ "reth-consensus",
  "reth-engine-tree",
  "reth-ethereum-cli",
+ "reth-evm",
+ "reth-primitives-traits",
+ "reth-provider",
+ "reth-revm",
+ "reth-tasks",
+ "reth-tracing",
+ "revm-database",
+ "tokio",
  "tracing",
 ]
 

@@ -11,12 +11,15 @@
 #[no_mangle]
 pub unsafe extern "C" fn __rust_probestack() {}
 
+mod commands;
+
 use arb_node::{
     chainspec::ArbChainSpecParser, cli_components, launcher::ArbEngineLauncher, ArbNode,
 };
 use clap::Parser;
-use reth::cli::Cli;
+use reth::{cli::Cli, CliRunner};
 use reth_engine_tree::tree::TreeConfig;
+use reth_tracing::{RethTracer, Tracer};
 use tracing::info;
 
 fn main() {
@@ -27,6 +30,14 @@ fn main() {
         // no concurrent readers of the environment exist (Rust 2024
         // unsafe set_var contract).
         unsafe { std::env::set_var("RUST_BACKTRACE", "1") };
+    }
+
+    if std::env::args().nth(1).as_deref() == Some("re-execute") {
+        if let Err(err) = run_re_execute() {
+            eprintln!("Error: {err:?}");
+            std::process::exit(1);
+        }
+        return;
     }
 
     if let Err(err) = Cli::<ArbChainSpecParser>::parse().run_with_components::<ArbNode>(
@@ -47,4 +58,19 @@ fn main() {
         eprintln!("Error: {err:?}");
         std::process::exit(1);
     }
+}
+
+fn run_re_execute() -> eyre::Result<()> {
+    // Strip the `re-execute` subcommand token before clap parses the flags-only struct.
+    let mut args = std::env::args_os();
+    let bin = args.next().unwrap_or_default();
+    let _ = args.next();
+    let argv = std::iter::once(bin).chain(args);
+    let cmd = commands::re_execute::Command::<ArbChainSpecParser>::parse_from(argv);
+
+    let _guard = RethTracer::new().init().ok().flatten();
+
+    let runner = CliRunner::try_default_runtime()?;
+    let runtime = runner.runtime();
+    runner.run_until_ctrl_c(cmd.execute::<ArbNode>(cli_components, runtime))
 }
