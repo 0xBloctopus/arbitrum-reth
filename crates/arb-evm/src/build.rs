@@ -1423,16 +1423,47 @@ where
                 }
             }
 
-            let overlay = &mut self.state_overlay;
+            // Credit the deposit through revm's commit path. The overlay/drain
+            // mechanism used elsewhere only feeds `apply_transition` and
+            // skips `bal_state.commit` and `apply_evm_state_iter` — both of
+            // which reth requires for the change to land in the block bundle
+            // and persist cross-block during offline re-execution. Matches
+            // Nitro's `state.AddBalance(To, value)`.
             let db: &mut State<DB> = self.inner.evm_mut().db_mut();
-            // Mint deposit value to sender, then transfer to recipient.
-            // The deposit mint always covers the value transfer that follows.
-            let _ = arb_util::mint_balance(&sender, value, |f, t, a| {
-                apply_balance_op(db, overlay, f, t, a)
-            });
-            let _ = arb_util::transfer_balance(Some(&sender), Some(&to), value, |f, t, a| {
-                apply_balance_op(db, overlay, f, t, a)
-            });
+            let _ = db.load_cache_account(to);
+            let prior_info = db
+                .cache
+                .accounts
+                .get(&to)
+                .and_then(|c| c.account.as_ref())
+                .map(|a| a.info.clone());
+            let (new_info, was_new) = match prior_info {
+                Some(prev) => (
+                    revm_state::AccountInfo {
+                        balance: prev.balance.saturating_add(value),
+                        ..prev
+                    },
+                    false,
+                ),
+                None => (
+                    revm_state::AccountInfo {
+                        balance: value,
+                        ..Default::default()
+                    },
+                    true,
+                ),
+            };
+            let mut account = revm_state::Account {
+                info: new_info,
+                ..Default::default()
+            };
+            account.mark_touch();
+            if was_new {
+                account.mark_created();
+            }
+            let mut changes = alloy_primitives::map::HashMap::default();
+            changes.insert(to, account);
+            <State<DB> as revm::DatabaseCommit>::commit(db, changes);
             self.touched_accounts.insert(sender);
             self.touched_accounts.insert(to);
 
