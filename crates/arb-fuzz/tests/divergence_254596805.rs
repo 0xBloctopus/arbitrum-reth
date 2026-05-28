@@ -94,7 +94,7 @@ fn divergence_254596805_exact() {
 
     let mut calldata = Vec::with_capacity(16_001);
     calldata.push(0x01);
-    calldata.extend(std::iter::repeat(0x42).take(16_000));
+    calldata.extend(std::iter::repeat_n(0x42, 16_000));
     let invoke = signed(
         1,
         Some(STYLUS_ADDR),

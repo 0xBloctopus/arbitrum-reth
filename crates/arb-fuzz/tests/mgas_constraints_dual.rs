@@ -936,12 +936,12 @@ fn stylus_root_activation_matches_nitro() {
         .dual
         .right
         .code(frag_addr, BlockId::Latest)
-        .map_or(false, |c| !c.is_empty());
+        .is_ok_and(|c| !c.is_empty());
     let root_deployed = rig
         .dual
         .right
         .code(root_addr, BlockId::Latest)
-        .map_or(false, |c| !c.is_empty());
+        .is_ok_and(|c| !c.is_empty());
     assert!(
         frag_deployed && root_deployed,
         "fragment/root did not deploy"
@@ -1096,7 +1096,7 @@ fn stylus_root_length_mismatch_reverts_on_both() {
         .dual
         .right
         .code(root_addr, BlockId::Latest)
-        .map_or(false, |c| !c.is_empty());
+        .is_ok_and(|c| !c.is_empty());
     assert!(root_deployed, "bad root did not deploy");
     let r = rig
         .dual
@@ -1248,7 +1248,7 @@ fn stylus_wasm_computation_constraint_matches_nitro() {
         .dual
         .right
         .code(root_addr, BlockId::Latest)
-        .map_or(false, |c| !c.is_empty());
+        .is_ok_and(|c| !c.is_empty());
     assert!(root_deployed, "root did not deploy");
 
     let base_fee_call = TxRequest {
@@ -1305,7 +1305,7 @@ fn forward_calldata(target: Address, inner: &[u8]) -> Vec<u8> {
     out.extend_from_slice(&word(0x40));
     out.extend_from_slice(&word(inner.len() as u64));
     out.extend_from_slice(inner);
-    while out.len() % 32 != 0 {
+    while !out.len().is_multiple_of(32) {
         out.push(0);
     }
     out

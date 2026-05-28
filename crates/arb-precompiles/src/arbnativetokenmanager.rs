@@ -16,7 +16,6 @@ pub const ARBNATIVETOKENMANAGER_ADDRESS: Address = Address::new([
 ]);
 
 const SLOAD_GAS: u64 = 800;
-const COPY_GAS: u64 = 3;
 
 /// Gas cost for mint/burn: WarmStorageReadCost + CallValueTransferGas.
 const MINT_BURN_GAS: u64 = 100 + 9000;

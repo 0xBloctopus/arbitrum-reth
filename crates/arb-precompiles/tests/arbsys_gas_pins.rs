@@ -138,8 +138,9 @@ fn send_merkle_tree_state_empty_v30_gas_pin() {
     let run = fixture(ARBOS_V30)
         .caller(Address::ZERO)
         .call(arbsys, &calldata("sendMerkleTreeState()", &[]));
-    // STORAGE_READ_COST(800 body size read) + argsCost(0) + resultCost(4 words) = 812
-    assert_eq!(run.gas_used(), SLOAD + 4 * COPY);
+    // OpenArbosState(800) + STORAGE_READ_COST(800 body size read) + argsCost(0)
+    //   + resultCost(4 words) = 1612.
+    assert_eq!(run.gas_used(), 2 * SLOAD + 4 * COPY);
 }
 
 // ── L2→L1 send paths. The full append-emit schedule includes keccak,
