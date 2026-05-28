@@ -236,8 +236,10 @@ fn gas_check(
     gas_used: u64,
     result: PrecompileResult,
 ) -> PrecompileResult {
+    if gas_used > gas_limit {
+        return Err(PrecompileError::OutOfGas);
+    }
     match result {
-        Ok(ref output) if output.gas_used > gas_limit => Err(PrecompileError::OutOfGas),
         Err(PrecompileError::Other(_)) if ctx.block.arbos_version >= 11 => Ok(
             PrecompileOutput::new_reverted(gas_used.min(gas_limit), Default::default()),
         ),
