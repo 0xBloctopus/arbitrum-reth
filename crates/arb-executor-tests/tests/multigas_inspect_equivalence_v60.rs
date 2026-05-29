@@ -52,6 +52,7 @@ const RECIP_EOA: Address = address!("00000000000000000000000000000000eee00001");
 const RECIP_NEW: Address = address!("00000000000000000000000000000000eee00002");
 const RECIP_CONTRACT: Address = address!("00000000000000000000000000000000c0de0003");
 const FAILED_XFER: Address = address!("00000000000000000000000000000000fa11ed00");
+const OOG_CALLER: Address = address!("000000000000000000000000000000000060067a");
 
 fn sender() -> Address {
     use k256::ecdsa::SigningKey;
@@ -127,6 +128,17 @@ fn failed_xfer_code() -> Vec<u8> {
     ];
     code.extend_from_slice(RECIP_EOA.as_slice());
     code.extend_from_slice(&[0x60, 0x00, 0xf1, 0x50, 0x00]); // gas; CALL; POP; STOP
+    code
+}
+
+/// Calls [`STORE`] forwarding only 2000 gas, so its cold SSTORE runs out of gas
+/// mid-charge. The caller ignores the failed sub-call and returns normally.
+fn oog_caller_code() -> Vec<u8> {
+    let mut code = vec![0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00];
+    code.push(0x73); // PUSH20 STORE
+    code.extend_from_slice(STORE.as_slice());
+    code.extend_from_slice(&[0x61, 0x07, 0xd0]); // PUSH2 2000 (gas)
+    code.extend_from_slice(&[0xf1, 0x50, 0x00]); // CALL; POP; STOP
     code
 }
 
@@ -228,6 +240,7 @@ fn harness() -> ArbosHarness {
         (RECIP_CONTRACT, stipend_user_code(), 0),
         (DISPERSE, disperse_code(), 1_000),
         (FAILED_XFER, failed_xfer_code(), 0),
+        (OOG_CALLER, oog_caller_code(), 0),
     ] {
         let code = Bytecode::new_raw(bytes.into());
         set_account(
@@ -384,5 +397,23 @@ fn failed_value_transfer_then_call_is_consensus_equivalent() {
         plain.1,
         U256::from(1u64),
         "STORE executed after failed transfer"
+    );
+}
+
+/// An opcode that runs out of gas is charged less than its nominal cost. Its
+/// multi-gas must reflect only the gas consumed, not the full typed cost, or
+/// the inspector over-attributes and the refund diverges from the plain path.
+#[test]
+fn out_of_gas_sstore_is_consensus_equivalent() {
+    let plain = run_plain(&[OOG_CALLER]);
+    let inspected = run_inspected(&[OOG_CALLER]);
+    assert_eq!(
+        plain, inspected,
+        "out-of-gas sstore diverged: inspect vs plain",
+    );
+    assert_eq!(
+        plain.1,
+        U256::ZERO,
+        "STORE slot unwritten (sub-call ran out of gas)"
     );
 }
