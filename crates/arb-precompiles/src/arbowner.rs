@@ -1968,8 +1968,8 @@ fn handle_set_multi_gas_pricing_constraints(
         validate_multi_gas_exponents(internals, arb_state, (i as u64) + 1, *gas_used)?;
     }
 
-    let extra = (count * 16 + 2) * SSTORE_GAS + (count * 12 + 2) * SLOAD_GAS + COPY_GAS;
-    crate::charge_precompile_gas(gas_used, extra);
+    // The constraint storage is written through the system burner, so it costs
+    // no EVM gas to the transaction.
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
