@@ -52,7 +52,13 @@ pub enum OpKind {
 /// always sums to `gas`.
 pub fn classify(kind: OpKind, gas: u64) -> MultiGas {
     let non_comp = non_computation(kind);
-    let computation = gas.saturating_sub(non_comp.single_gas());
+    // An opcode that runs out of gas is charged only the gas that was left,
+    // which can be less than its typed cost. Attribute just the consumed gas so
+    // the split never exceeds what the opcode actually used.
+    if non_comp.single_gas() > gas {
+        return MultiGas::computation_gas(gas);
+    }
+    let computation = gas - non_comp.single_gas();
     non_comp.saturating_add(MultiGas::computation_gas(computation))
 }
 
@@ -285,6 +291,35 @@ mod tests {
     fn other_is_all_computation() {
         let mg = classify(OpKind::Other, 42);
         assert_eq!(dims(&mg), (42, 0, 0, 0, 0));
+    }
+
+    #[test]
+    fn out_of_gas_opcode_attributes_only_consumed_gas() {
+        // A cold SLOAD that runs out of gas consumes less than the 2100 cold
+        // cost; the cold surcharge must not be attributed in full.
+        let sload = classify(OpKind::StorageRead { cold: true }, 1_696);
+        assert_eq!(sload.single_gas(), 1_696);
+        assert_eq!(dims(&sload), (1_696, 0, 0, 0, 0));
+        // A warm-reset SSTORE that runs out of gas (needs 2900, had 2707).
+        let sstore = classify(
+            OpKind::StorageWrite {
+                cold: false,
+                original: U256::from(7),
+                present: U256::from(7),
+                new: U256::from(9),
+            },
+            2_707,
+        );
+        assert_eq!(sstore.single_gas(), 2_707);
+        // A new-account CALL that runs out before the 25000 growth is charged.
+        let call = classify(
+            OpKind::Call {
+                cold: true,
+                new_account: true,
+            },
+            5_000,
+        );
+        assert_eq!(call.single_gas(), 5_000);
     }
 
     #[test]
