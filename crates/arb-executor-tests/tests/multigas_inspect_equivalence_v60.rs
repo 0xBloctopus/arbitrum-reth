@@ -47,6 +47,11 @@ const ARBOS_VERSION: u64 = 60;
 const HEADER_BASE_FEE: u64 = 150_000_000;
 const STORE: Address = address!("00000000000000000000000000000000c0c0c0c0");
 const FACTORY: Address = address!("00000000000000000000000000000000fac70217");
+const DISPERSE: Address = address!("00000000000000000000000000000000d15b0d15");
+const RECIP_EOA: Address = address!("00000000000000000000000000000000eee00001");
+const RECIP_NEW: Address = address!("00000000000000000000000000000000eee00002");
+const RECIP_CONTRACT: Address = address!("00000000000000000000000000000000c0de0003");
+const FAILED_XFER: Address = address!("00000000000000000000000000000000fa11ed00");
 
 fn sender() -> Address {
     use k256::ecdsa::SigningKey;
@@ -86,6 +91,43 @@ fn factory_code() -> Vec<u8> {
         0x50, // POP
         0x00, // STOP
     ]
+}
+
+/// Accepts a value transfer using part of its stipend: PUSH1 1; PUSH1 2; ADD;
+/// POP; STOP.
+fn stipend_user_code() -> Vec<u8> {
+    vec![0x60, 0x01, 0x60, 0x02, 0x01, 0x50, 0x00]
+}
+
+/// Sends 1 wei to each recipient via a zero-gas CALL, then STOP. Each call
+/// forwards no gas, so the child runs on the bare value-transfer stipend: the
+/// two EOAs leave it unspent (one existing, one created by the transfer), the
+/// contract spends a little. The unspent stipend is returned to this frame, so
+/// none of it may be attributed as the caller's own gas.
+fn disperse_code() -> Vec<u8> {
+    let mut code = Vec::new();
+    for r in [RECIP_EOA, RECIP_NEW, RECIP_CONTRACT] {
+        code.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00]);
+        code.extend_from_slice(&[0x60, 0x01]); // value
+        code.push(0x73); // PUSH20
+        code.extend_from_slice(r.as_slice());
+        code.extend_from_slice(&[0x60, 0x00]); // gas
+        code.extend_from_slice(&[0xf1, 0x50]); // CALL; POP
+    }
+    code.push(0x00); // STOP
+    code
+}
+
+/// Attempts a single value transfer it cannot fund (zero balance): the call
+/// fails the balance check before a child frame is entered, so its gas is
+/// classified from the call opcode delta alone.
+fn failed_xfer_code() -> Vec<u8> {
+    let mut code = vec![
+        0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x01, 0x73,
+    ];
+    code.extend_from_slice(RECIP_EOA.as_slice());
+    code.extend_from_slice(&[0x60, 0x00, 0xf1, 0x50, 0x00]); // gas; CALL; POP; STOP
+    code
 }
 
 fn call_tx(to: Address, nonce: u64) -> Recovered<ArbTransactionSigned> {
@@ -128,8 +170,8 @@ fn exec_ctx() -> EthBlockExecutionCtx<'static> {
     }
 }
 
-/// (sender balance, STORE slot 0, FACTORY nonce).
-type PostState = (U256, U256, u64);
+/// (sender balance, STORE slot 0, FACTORY nonce, disperse recipient balances).
+type PostState = (U256, U256, u64, U256, U256, U256);
 
 fn read_post_state(h: &mut ArbosHarness) -> PostState {
     let bal = |h: &mut ArbosHarness, a: Address| {
@@ -157,7 +199,14 @@ fn read_post_state(h: &mut ArbosHarness) -> PostState {
         .and_then(|a| a.account.as_ref())
         .map(|a| a.info.nonce)
         .unwrap_or(0);
-    (bal(h, sender()), slot0, factory_nonce)
+    (
+        bal(h, sender()),
+        slot0,
+        factory_nonce,
+        bal(h, RECIP_EOA),
+        bal(h, RECIP_NEW),
+        bal(h, RECIP_CONTRACT),
+    )
 }
 
 fn harness() -> ArbosHarness {
@@ -173,19 +222,34 @@ fn harness() -> ArbosHarness {
             ..Default::default()
         },
     );
-    for (addr, bytes) in [(STORE, store_code()), (FACTORY, factory_code())] {
+    for (addr, bytes, balance) in [
+        (STORE, store_code(), 0u64),
+        (FACTORY, factory_code(), 0),
+        (RECIP_CONTRACT, stipend_user_code(), 0),
+        (DISPERSE, disperse_code(), 1_000),
+        (FAILED_XFER, failed_xfer_code(), 0),
+    ] {
         let code = Bytecode::new_raw(bytes.into());
         set_account(
             h.state(),
             addr,
             AccountInfo {
                 nonce: 1,
+                balance: U256::from(balance),
                 code_hash: code.hash_slow(),
                 code: Some(code),
                 ..Default::default()
             },
         );
     }
+    set_account(
+        h.state(),
+        RECIP_EOA,
+        AccountInfo {
+            balance: U256::from(5u64),
+            ..Default::default()
+        },
+    );
     h
 }
 
@@ -276,4 +340,49 @@ fn repeated_creates_then_call_is_consensus_equivalent() {
 #[test]
 fn plain_multi_call_is_consensus_equivalent() {
     assert_equivalent(&[STORE, STORE], 0);
+}
+
+/// A contract that disperses value through zero-gas CALLs: each child runs on
+/// the bare stipend and returns most of it. The returned stipend must not be
+/// attributed to the caller, or the inspector over-counts and the refund (and
+/// thus the sender's balance) diverges from the plain path.
+#[test]
+fn disperse_value_transfers_is_consensus_equivalent() {
+    let plain = run_plain(&[DISPERSE]);
+    let inspected = run_inspected(&[DISPERSE]);
+    assert_eq!(
+        plain, inspected,
+        "value-transfer disperse diverged: inspect vs plain",
+    );
+    assert_eq!(plain.3, U256::from(6u64), "existing EOA received 1 wei");
+    assert_eq!(plain.4, U256::from(1u64), "new account received 1 wei");
+    assert_eq!(plain.5, U256::from(1u64), "contract received 1 wei");
+    assert!(
+        plain.0 < U256::from(10u64).pow(U256::from(19u64)),
+        "sender must have been charged",
+    );
+}
+
+/// A value transfer that fails the balance check enters no child frame. Its
+/// frame bookkeeping must still balance — a leaked open frame would withhold
+/// the failing transaction's multi-gas and bleed it into the following one,
+/// diverging that transaction's refund from the plain path.
+#[test]
+fn failed_value_transfer_then_call_is_consensus_equivalent() {
+    let plain = run_plain(&[FAILED_XFER, STORE]);
+    let inspected = run_inspected(&[FAILED_XFER, STORE]);
+    assert_eq!(
+        plain, inspected,
+        "failed transfer diverged: inspect vs plain",
+    );
+    assert_eq!(
+        plain.3,
+        U256::from(5u64),
+        "recipient unchanged by failed transfer"
+    );
+    assert_eq!(
+        plain.1,
+        U256::from(1u64),
+        "STORE executed after failed transfer"
+    );
 }
