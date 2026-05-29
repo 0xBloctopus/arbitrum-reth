@@ -2294,6 +2294,14 @@ where
                 dimensioned.saturating_add(MultiGas::computation_gas(remainder))
             }
         };
+        // The per-dimension split must total the raw pre-refund gas. Over-
+        // attribution (more single-gas than the tx actually used) would inflate
+        // the multi-dimensional cost and corrupt the v60 refund.
+        debug_assert_eq!(
+            execution_multi_gas.single_gas(),
+            raw_gas_used,
+            "multi-gas split must total the raw pre-refund gas",
+        );
         let mut charged_multi_gas =
             MultiGas::single_dim_gas(poster_gas).saturating_add(execution_multi_gas);
 
