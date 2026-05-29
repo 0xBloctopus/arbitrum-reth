@@ -2119,6 +2119,15 @@ where
         // Capture gas_used as reported by reth's EVM (before our adjustments).
         // This represents the gas cost reth already deducted from the sender.
         let evm_gas_used = output.result.result.gas_used();
+        // The EIP-3529 gas refund reduces the single-dimensional gas the sender
+        // pays, but the per-resource multi-gas tracks the raw (pre-refund) usage
+        // — the refund applies only to the single-gas pool, not the resource
+        // dimensions. Carry it so the multi-gas can be reconstituted raw for the
+        // v60 refund and backlog, which reconcile against pre-refund usage.
+        let gas_refunded = match &output.result.result {
+            ExecutionResult::Success { gas_refunded, .. } => *gas_refunded,
+            _ => 0,
+        };
 
         // Adjust gas_used to include poster_gas only.
         // poster_gas was deducted from gas_limit before EVM execution so reth's
@@ -2265,16 +2274,23 @@ where
         let stylus_multi_gas = self.precompile_ctx.stylus_multi_gas();
         let precompile_multi_gas = self.precompile_ctx.precompile_multi_gas();
         let dimensioned = stylus_multi_gas.saturating_add(precompile_multi_gas);
+        // Target the raw (pre-EIP-3529-refund) gas. The reference tracks
+        // per-resource usage before applying the single-gas refund, so the
+        // multi-gas total reconciles to `evm_gas_used + gas_refunded`. The
+        // inspector already reports raw per-opcode gas (the refund only adjusts
+        // the single-gas pool), so the computation remainder fills the gap on
+        // the no-inspector path without double-counting on the inspector path.
+        let raw_gas_used = evm_gas_used.saturating_add(gas_refunded);
         let execution_multi_gas = match self.multi_gas_sink.lock().take() {
             Some(opcode_gas) => {
                 let observed = intrinsic_multi_gas
                     .saturating_add(opcode_gas)
                     .saturating_add(dimensioned);
-                let remainder = evm_gas_used.saturating_sub(observed.single_gas());
+                let remainder = raw_gas_used.saturating_sub(observed.single_gas());
                 observed.saturating_add(MultiGas::computation_gas(remainder))
             }
             None => {
-                let remainder = evm_gas_used.saturating_sub(dimensioned.single_gas());
+                let remainder = raw_gas_used.saturating_sub(dimensioned.single_gas());
                 dimensioned.saturating_add(MultiGas::computation_gas(remainder))
             }
         };
@@ -2464,7 +2480,6 @@ where
                 let finalise_ptr = &self.finalise_deleted as *const rustc_hash::FxHashSet<Address>;
                 let overlay_ptr = &mut self.state_overlay as *mut StateOverlay;
                 let arbos_ver = self.arb_ctx.arbos_version;
-                let basefee_retry = self.arb_ctx.basefee;
 
                 let arb_state_retry = ArbosState::open(db, SystemBurner::new(None, false))
                     .map_err(BlockExecutionError::other)?;
@@ -2489,15 +2504,16 @@ where
                             .get_current_multi_gas_fees(state_ref)
                             .unwrap_or([U256::ZERO; NUM_RESOURCE_KIND])
                     });
-                    Some(
-                        arb_state_retry
-                            .l2_pricing_state
-                            .multi_dimensional_price_for_refund_with_fees(
-                                pending.charged_multi_gas,
-                                cached,
-                                basefee_retry,
-                            ),
-                    )
+                    // SAFETY: see `Storage::state_mut()` invariant.
+                    let state_ref = unsafe { arb_state_retry.backing_storage.state_mut() };
+                    arb_state_retry
+                        .l2_pricing_state
+                        .multi_dimensional_price_for_refund_with_fees(
+                            state_ref,
+                            pending.charged_multi_gas,
+                            cached,
+                        )
+                        .ok()
                 } else {
                     None
                 };
@@ -2751,13 +2767,16 @@ where
                                     .get_current_multi_gas_fees(state_ref)
                                     .unwrap_or([U256::ZERO; NUM_RESOURCE_KIND])
                             });
+                            // SAFETY: see `Storage::state_mut()` invariant.
+                            let state_ref = unsafe { arb_state_post.backing_storage.state_mut() };
                             let multi_cost = arb_state_post
                                 .l2_pricing_state
                                 .multi_dimensional_price_for_refund_with_fees(
+                                    state_ref,
                                     charged_multi_gas,
                                     cached,
-                                    basefee_active,
-                                );
+                                )
+                                .unwrap_or(total_cost);
                             if total_cost > multi_cost {
                                 let refund_amount = total_cost.saturating_sub(multi_cost);
                                 let _ = arb_util::transfer_balance(
