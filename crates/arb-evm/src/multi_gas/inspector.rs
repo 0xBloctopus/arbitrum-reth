@@ -45,6 +45,10 @@ pub struct MultiGasInspector {
     pending: Pending,
     accumulated: MultiGas,
     sink: Option<MultiGasSink>,
+    /// Count of frames opened (call/create) and not yet closed. The outermost
+    /// frame closes when this returns to zero; the journal depth cannot be used
+    /// for this because a create frame can leave it offset.
+    open_frames: u32,
 }
 
 #[derive(Debug, Default)]
@@ -104,11 +108,12 @@ impl MultiGasInspector {
         self.flush_dangling_frame();
         self.pending = Pending::None;
         self.prev_gas = 0;
+        self.open_frames = 0;
         core::mem::replace(&mut self.accumulated, MultiGas::zero())
     }
 
     /// Publishes the accumulated multi-gas to the sink and resets, called when
-    /// the outermost frame returns (depth zero).
+    /// the outermost frame returns.
     fn publish(&mut self) {
         if self.sink.is_some() {
             let gas = self.take_multi_gas();
@@ -120,6 +125,15 @@ impl MultiGasInspector {
 
     fn add(&mut self, gas: MultiGas) {
         self.accumulated = self.accumulated.saturating_add(gas);
+    }
+
+    /// Records a frame closing. When the outermost frame closes (no frames left
+    /// open) the transaction's multi-gas is complete and is published.
+    fn frame_closed(&mut self) {
+        self.open_frames = self.open_frames.saturating_sub(1);
+        if self.open_frames == 0 {
+            self.publish();
+        }
     }
 
     /// A frame opcode that halted before forwarding (e.g. out of gas) never
@@ -282,6 +296,7 @@ impl<B, T, C, DB: Database, Ch> Inspector<Ctx<B, T, C, DB, Ch>, EthInterpreter>
         ctx: &mut Ctx<B, T, C, DB, Ch>,
         inputs: &mut CallInputs,
     ) -> Option<CallOutcome> {
+        self.open_frames += 1;
         if let Pending::Frame {
             cold,
             is_create: false,
@@ -302,13 +317,11 @@ impl<B, T, C, DB: Database, Ch> Inspector<Ctx<B, T, C, DB, Ch>, EthInterpreter>
 
     fn call_end(
         &mut self,
-        ctx: &mut Ctx<B, T, C, DB, Ch>,
+        _ctx: &mut Ctx<B, T, C, DB, Ch>,
         _inputs: &CallInputs,
         _outcome: &mut CallOutcome,
     ) {
-        if ctx.journaled_state.inner.depth == 0 {
-            self.publish();
-        }
+        self.frame_closed();
     }
 
     fn create(
@@ -316,6 +329,7 @@ impl<B, T, C, DB: Database, Ch> Inspector<Ctx<B, T, C, DB, Ch>, EthInterpreter>
         _ctx: &mut Ctx<B, T, C, DB, Ch>,
         inputs: &mut CreateInputs,
     ) -> Option<CreateOutcome> {
+        self.open_frames += 1;
         if let Pending::Frame {
             is_create: true,
             delta,
@@ -331,7 +345,7 @@ impl<B, T, C, DB: Database, Ch> Inspector<Ctx<B, T, C, DB, Ch>, EthInterpreter>
 
     fn create_end(
         &mut self,
-        ctx: &mut Ctx<B, T, C, DB, Ch>,
+        _ctx: &mut Ctx<B, T, C, DB, Ch>,
         _inputs: &CreateInputs,
         outcome: &mut CreateOutcome,
     ) {
@@ -339,9 +353,7 @@ impl<B, T, C, DB: Database, Ch> Inspector<Ctx<B, T, C, DB, Ch>, EthInterpreter>
             let deposit = (outcome.result.output.len() as u64).saturating_mul(CREATE_DATA_GAS);
             self.add(MultiGas::storage_growth_gas(deposit));
         }
-        if ctx.journaled_state.inner.depth == 0 {
-            self.publish();
-        }
+        self.frame_closed();
     }
 }
 
