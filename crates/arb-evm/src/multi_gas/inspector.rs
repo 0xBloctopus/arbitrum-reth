@@ -35,7 +35,6 @@ use crate::multi_gas::classify::{classify, OpKind};
 pub type MultiGasSink = Arc<Mutex<Option<MultiGas>>>;
 
 const WARM: u64 = 100; // WarmStorageReadCostEIP2929
-const CALL_STIPEND: u64 = 2_300; // CallStipend
 const CREATE_DATA_GAS: u64 = 200; // CreateDataGas (code storage, per byte)
 
 /// Accumulates per-transaction multi-gas across every executed frame.
@@ -306,7 +305,7 @@ impl<B, T, C, DB: Database, Ch> Inspector<Ctx<B, T, C, DB, Ch>, EthInterpreter>
         {
             self.pending = Pending::None;
             let value_transfer = matches!(inputs.value, CallValue::Transfer(v) if !v.is_zero());
-            let own = call_own_cost(delta, inputs.gas_limit, value_transfer);
+            let own = call_own_cost(delta, inputs.gas_limit);
             let new_account = is_plain_call
                 && value_transfer
                 && account_empty(&ctx.journaled_state.inner, inputs.target_address);
@@ -357,12 +356,12 @@ impl<B, T, C, DB: Database, Ch> Inspector<Ctx<B, T, C, DB, Ch>, EthInterpreter>
     }
 }
 
-/// Own cost of a call opcode: the step delta minus the gas forwarded to the
-/// child. The stipend is added to the child's limit without being charged to
-/// the caller, so it is excluded from the forwarded amount.
-fn call_own_cost(delta: u64, child_gas_limit: u64, value_transfer: bool) -> u64 {
-    let stipend = if value_transfer { CALL_STIPEND } else { 0 };
-    delta.saturating_sub(child_gas_limit.saturating_sub(stipend))
+/// Own cost of a call opcode: the step delta minus the child's full gas limit.
+/// The child limit includes any value-transfer stipend; the stipend and any
+/// unused forwarded gas are returned to the caller when the child frame ends,
+/// so they belong to the child's accounting, not the caller's own cost.
+fn call_own_cost(delta: u64, child_gas_limit: u64) -> u64 {
+    delta.saturating_sub(child_gas_limit)
 }
 
 fn peek(interp: &Interpreter<EthInterpreter>, from_top: usize) -> U256 {
@@ -437,23 +436,23 @@ mod tests {
     fn call_own_cost_strips_forwarded_gas() {
         // delta = own (2600 cold + 9000 value + 100 warm) + forwarded 50000.
         let delta = 2_600 + 9_000 + 100 + 50_000;
-        assert_eq!(call_own_cost(delta, 50_000, false), 2_600 + 9_000 + 100);
+        assert_eq!(call_own_cost(delta, 50_000), 2_600 + 9_000 + 100);
     }
 
     #[test]
-    fn call_own_cost_excludes_stipend_from_forwarded() {
-        // A value call forwards `gas_limit` to the child but the 2300 stipend is
-        // added on top without being charged to the caller.
-        let own = 2_700;
-        let forwarded_charged = 40_000;
-        let child_gas_limit = forwarded_charged + CALL_STIPEND;
-        let delta = own + forwarded_charged;
-        assert_eq!(call_own_cost(delta, child_gas_limit, true), own);
+    fn call_own_cost_strips_value_transfer_stipend() {
+        // A value transfer to an EOA forwards no gas; the child limit is just the
+        // 2300 stipend, which the EOA does not spend and revm returns to the
+        // caller. So the caller's own cost is the call cost minus the stipend.
+        const CALL_STIPEND: u64 = 2_300;
+        let call_cost = 2_600 + 9_000; // cold access + value transfer
+        let delta = call_cost; // stipend is not deducted from the caller
+        assert_eq!(call_own_cost(delta, CALL_STIPEND), call_cost - CALL_STIPEND);
     }
 
     #[test]
     fn call_own_cost_saturates() {
-        assert_eq!(call_own_cost(100, 50_000, false), 0);
+        assert_eq!(call_own_cost(100, 50_000), 0);
     }
 
     #[test]
