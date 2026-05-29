@@ -32,6 +32,12 @@ use tracing::*;
 pub struct Command<C: ChainSpecParser> {
     #[command(flatten)]
     env: EnvironmentArgs<C>,
+
+    /// Highest block to rebuild to. Defaults to the chain tip. Bounding the
+    /// rebuild is useful for validating the merkle state root over a smaller
+    /// range before committing to a full rebuild.
+    #[arg(long)]
+    to: Option<u64>,
 }
 
 impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>> Command<C> {
@@ -51,11 +57,12 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
         } = self.env.init::<N>(AccessRights::RW, runtime)?;
 
         let components = components(provider_factory.chain_spec());
-        let tip = provider_factory.provider()?.last_block_number()?;
+        let chain_tip = provider_factory.provider()?.last_block_number()?;
+        let target = self.to.unwrap_or(chain_tip).min(chain_tip);
 
         info!(
             target: "arb::repair",
-            tip,
+            target,
             "Rebuilding derived state from canonical blocks; headers and bodies are preserved"
         );
 
@@ -63,26 +70,24 @@ impl<C: ChainSpecParser<ChainSpec: EthChainSpec + Hardforks + EthereumHardforks>
             &config,
             provider_factory,
             components.evm_config().clone(),
-            tip,
+            target,
         );
 
         pipeline.move_to_static_files()?;
 
-        // Reset the derived (offline) stages to genesis. Headers and bodies are
-        // not part of the offline set, so the canonical block data is preserved.
-        info!(target: "arb::repair", "Resetting derived state to genesis");
+        // Re-execute forward. The derived stages are expected to already be at
+        // genesis (reset via `stage drop`), so this unwind is a no-op; running
+        // it keeps the command correct when the stages are mid-chain. The merkle
+        // stage validates each checkpoint's state root against the canonical
+        // header, halting the run on mismatch instead of persisting bad state.
         pipeline.unwind(0, None)?;
-
-        // Re-execute forward to the tip. The merkle stage validates each block's
-        // recomputed state root against the canonical header; on mismatch the
-        // pipeline fails on the unwind rather than persisting incorrect state.
-        info!(target: "arb::repair", tip, "Re-executing forward");
+        info!(target: "arb::repair", target, "Re-executing forward");
         pipeline.run().await?;
 
         info!(
             target: "arb::repair",
-            tip,
-            "Repair complete; recomputed state root matches the canonical header at the tip"
+            target,
+            "Repair complete; recomputed state root matches the canonical header"
         );
         Ok(())
     }
