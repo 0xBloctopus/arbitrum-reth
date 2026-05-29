@@ -36,7 +36,6 @@ const CHAIN_ID: u64 = 421614;
 const ARBOS_VERSION: u64 = 60;
 const HEADER_BASE_FEE: u64 = 0x1315410;
 const SEND_COUNT: u64 = 0x1c80d;
-const ARBOS_ADDRESS: Address = address!("00000000000000000000000000000000000A4B05");
 const SEQUENCER: Address = address!("a4b000000000000000000073657175656e636572");
 
 // ArbOS blockhashes subspace: L1 block number lives at this slot.
