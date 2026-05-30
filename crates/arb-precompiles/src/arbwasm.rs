@@ -631,8 +631,6 @@ fn handle_activate_program(
 
     let gas_available = input.gas.saturating_sub(gas_used);
     let mut gas_for_prover = gas_available;
-    let diag_pre_prover = gas_used;
-    let diag_gas_to_prover = gas_for_prover;
 
     let info = match arb_stylus::activate_program(
         &wasm,
@@ -652,11 +650,23 @@ fn handle_activate_program(
 
     let prover_gas_used = gas_available.saturating_sub(gas_for_prover);
     crate::charge_computation(&mut gas_used, ctx, prover_gas_used);
-    let wasm_hash = alloy_primitives::keccak256(&wasm);
-    tracing::warn!(target: "stylus",
-        input_gas = input.gas, pre_prover = diag_pre_prover, to_prover = diag_gas_to_prover,
-        prover_used = prover_gas_used, after_prover = gas_used,
-        wasm_len = wasm.len(), %wasm_hash, "activateProgram gas breakdown");
+
+    // Re-activating a cached program reads its previous module hash so the stale
+    // cache entry can be evicted before the new one is stored.
+    if was_cached {
+        let _prev_module_hash = {
+            let internals = input.internals_mut();
+            let arb_state = ctx
+                .block
+                .arbos_state(internals)
+                .map_err(ArbPrecompileError::fatal)?;
+            arb_state
+                .programs
+                .get_module_hash(internals, code_hash)
+                .map_err(ArbPrecompileError::fatal)?
+        };
+        crate::charge_storage_read(&mut gas_used, ctx, SLOAD_GAS);
+    }
 
     {
         let internals = input.internals_mut();
@@ -787,9 +797,6 @@ fn handle_activate_program(
     let return_gas = COPY_GAS * (return_data.len() as u64).div_ceil(32);
     crate::charge_computation(&mut gas_used, ctx, return_gas);
 
-    tracing::warn!(target: "stylus",
-        total = gas_used, args = args_cost, prover = prover_gas_used,
-        event = event_gas, ret = return_gas, "activateProgram total gas");
     if gas_used > input.gas {
         return Err(ArbPrecompileError::OutOfGas.into());
     }
