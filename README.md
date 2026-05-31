@@ -30,7 +30,7 @@ docker compose up -d
 
 `docker compose up -d` pulls and runs the prebuilt multi-arch image `ghcr.io/0xbloctopus/arbitrum-reth` (`linux/amd64`, `linux/arm64`). To build the image from source instead, run `docker compose up -d --build`.
 
-To sync from a snapshot instead of from genesis, see [Snapshots](https://arbitrum-reth.rs/docs/snapshots) for the fast first-run path.
+To sync from a snapshot instead of from genesis, see [Snapshots](https://arbreth.rs/docs/snapshots) for the fast first-run path.
 
 ### Build from Source
 
