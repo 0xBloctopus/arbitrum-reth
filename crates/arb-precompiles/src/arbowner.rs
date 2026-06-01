@@ -1856,8 +1856,8 @@ fn handle_set_gas_pricing_constraints(
             .map_err(ArbPrecompileError::fatal)?;
     }
 
-    let extra = SLOAD_GAS + (count * 4 + 2) * SSTORE_GAS + count * SLOAD_GAS + COPY_GAS;
-    crate::charge_precompile_gas(gas_used, extra);
+    // The constraint storage is written through the system burner, so it costs
+    // no EVM gas to the transaction, matching `setMultiGasPricingConstraints`.
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
