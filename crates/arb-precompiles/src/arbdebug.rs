@@ -113,8 +113,6 @@ fn handle_become_chain_owner(
             .map_err(ArbPrecompileError::fatal)?;
         crate::charge_storage_read(gas_used, ctx, 2 * SLOAD_GAS);
         crate::charge_storage_write(gas_used, ctx, 3 * SSTORE_GAS);
-    } else {
-        crate::charge_storage_read(gas_used, ctx, SLOAD_GAS);
     }
 
     Ok(PrecompileOutput::new(
