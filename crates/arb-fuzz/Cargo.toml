@@ -29,7 +29,7 @@ thiserror = { workspace = true }
 hex = { workspace = true }
 
 [dev-dependencies]
-wat = "1.0"
+wat = "1.246"
 arb-stylus = { path = "../arb-stylus" }
 
 [lib]
