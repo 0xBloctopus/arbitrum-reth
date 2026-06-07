@@ -436,6 +436,16 @@ fn handle_cancel(
     let gas_limit = input.gas;
     let caller = input.caller;
     let now = current_timestamp(input);
+
+    // A retryable cannot modify itself: reject cancelling the ticket currently
+    // being redeemed.
+    {
+        let current_retryable = ctx.tx_snapshot().retryable_id;
+        if !current_retryable.is_zero() && current_retryable == ticket_id {
+            return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+        }
+    }
+
     load_arbos(input)?;
 
     let internals = input.internals_mut();

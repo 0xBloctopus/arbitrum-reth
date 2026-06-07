@@ -2,7 +2,10 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use arb_fuzz::{
     arbitrary_impls::{interop::interop_eoa, message_step},
     guards::GuardedRun,
-    scaffolding::{fund_interop_eoa, selector4, signed, FUZZ_L1_BASE_FEE, INVOKE_GAS_CAP},
+    scaffolding::{
+        deploy_solidity, eoa_create_addr, fund_interop_eoa, selector4, signed, FUZZ_L1_BASE_FEE,
+        INVOKE_GAS_CAP,
+    },
     shared_nodes::{next_msg_idx, FUZZ_L2_CHAIN_ID},
 };
 use arb_test_harness::messaging::{
@@ -332,6 +335,96 @@ fn cancel_zero_calldata_by_beneficiary_matches_nitro() {
 
     GuardedRun::new("cancel_zero_calldata_by_beneficiary", steps)
         .expect_last_tx_status(true)
+        .run();
+}
+
+/// Runtime that calls `ArbRetryableTx.cancel(ticket)` and ignores the result.
+/// Memory layout: selector word at 0, ticket at 4, so calldata = selector ++ ticket.
+fn cancel_self_runtime(ticket: B256) -> Vec<u8> {
+    let mut sel_word = [0u8; 32];
+    sel_word[..4].copy_from_slice(&selector4("cancel(bytes32)"));
+
+    let mut code = Vec::new();
+    code.push(0x7f); // PUSH32 selector word
+    code.extend_from_slice(&sel_word);
+    code.extend_from_slice(&[0x60, 0x00, 0x52]); // PUSH1 0; MSTORE
+    code.push(0x7f); // PUSH32 ticket
+    code.extend_from_slice(ticket.as_slice());
+    code.extend_from_slice(&[0x60, 0x04, 0x52]); // PUSH1 4; MSTORE
+                                                 // CALL(gas, 0x6e, 0, 0, 36, 0, 0)
+    code.extend_from_slice(&[
+        0x60, 0x00, // retLength
+        0x60, 0x00, // retOffset
+        0x60, 0x24, // argsLength = 36
+        0x60, 0x00, // argsOffset
+        0x60, 0x00, // value
+        0x60, 0x6e, // ArbRetryableTx address
+        0x5a, // GAS
+        0xf1, // CALL
+        0x50, // POP
+        0x00, // STOP
+    ]);
+    code
+}
+
+/// A retryable cannot modify itself. When an auto-redeem runs a contract that
+/// calls `cancel` on the very ticket being redeemed, the reference rejects it
+/// (the ticket lives until the redeem completes). Both nodes must keep the
+/// ticket alive through the redeem and only delete it on success — the escrow,
+/// callvalue and events must match.
+#[test]
+#[ignore]
+fn redeem_self_cancel_rejected_matches_nitro() {
+    let l1_sender = Address::repeat_byte(0xa9);
+
+    let mut steps = Vec::new();
+    fund_interop_eoa(&mut steps);
+    fund_l1_sender(&mut steps, l1_sender);
+
+    // The contract address depends only on (deployer, nonce), not on its code,
+    // so the ticket — which depends on the submit targeting this address — can
+    // be embedded in the runtime that is deployed there.
+    let contract = eoa_create_addr(0);
+
+    let l2_call_value = U256::from(10u128).pow(U256::from(18u64));
+    let gas_limit = 400_000u64;
+    let max_fee = U256::from(2_000_000_000u64);
+    let max_submission_fee = U256::from(10u128).pow(U256::from(15u64));
+    let deposit = l2_call_value
+        + max_submission_fee
+        + max_fee * U256::from(gas_limit)
+        + U256::from(10u128).pow(U256::from(17u64));
+
+    let submit = RetryableSubmitBuilder {
+        l1_sender,
+        to: contract,
+        l2_call_value,
+        deposit_value: deposit,
+        max_submission_fee,
+        excess_fee_refund_address: contract,
+        call_value_refund_address: contract,
+        gas_limit,
+        max_fee_per_gas: max_fee,
+        data: Bytes::new(),
+        l1_block_number: 3,
+        timestamp: 1_700_000_010,
+        request_id: Some(B256::repeat_byte(0x21)),
+    }
+    .build()
+    .expect("submit");
+    let ticket = submit_retryable_ticket_id(&submit, FUZZ_L2_CHAIN_ID).expect("ticket id");
+
+    // Deploy the self-cancelling contract (nonce 0), then submit; the submit
+    // auto-redeems into the contract, which calls cancel(ticket) mid-redeem.
+    let deployed = deploy_solidity(&mut steps, 0, &cancel_self_runtime(ticket));
+    assert_eq!(deployed, contract);
+
+    let idx = next_msg_idx();
+    steps.push(message_step(idx, submit, idx));
+
+    GuardedRun::new("redeem_self_cancel_rejected", steps)
+        .diff_account(contract)
+        .diff_account(apply_l1_to_l2_alias(l1_sender))
         .run();
 }
 
