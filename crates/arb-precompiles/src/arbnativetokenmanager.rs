@@ -45,6 +45,10 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Ok(c) => c,
         Err(_) => return crate::burn_all_revert(gas_limit),
     };
+    // No method on this precompile is payable; reject any call value.
+    if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
+        return r;
+    }
 
     use IArbNativeTokenManager::ArbNativeTokenManagerCalls;
     let result = match call {

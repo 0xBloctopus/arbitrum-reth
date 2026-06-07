@@ -35,6 +35,11 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 
     let gas_limit = input.gas;
 
+    // No method on this precompile is payable; reject any call value.
+    if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
+        return r;
+    }
+
     // Mimic the reference FreeAccessPrecompile wrapper: open ArbOS state and
     // check `filterers.IsMember(caller)` (2 SLOAD = 1600 gas total), without
     // charging argsCost. Then always run the inner method. The wrapper keeps

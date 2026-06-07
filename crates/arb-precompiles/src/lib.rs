@@ -212,6 +212,31 @@ fn burn_all_revert(gas_limit: u64) -> PrecompileResult {
     ))
 }
 
+/// Reject call value sent to a non-payable method: the call reverts consuming
+/// all forwarded gas, and the surrounding frame rolls the value transfer back.
+/// `payable` lists the selectors that may receive value; every other method on
+/// the precompile is non-payable. Call this only once the precompile is active
+/// for the current ArbOS version, so an inactive precompile still behaves as a
+/// plain, value-accepting account.
+pub fn reject_nonpayable_value(
+    value: alloy_primitives::U256,
+    data: &[u8],
+    gas_limit: u64,
+    payable: &[[u8; 4]],
+) -> Option<PrecompileResult> {
+    if value.is_zero() {
+        return None;
+    }
+    let selector: [u8; 4] = data
+        .get(..4)
+        .and_then(|s| s.try_into().ok())
+        .unwrap_or([0u8; 4]);
+    if payable.contains(&selector) {
+        return None;
+    }
+    Some(burn_all_revert(gas_limit))
+}
+
 /// Emit a pre-encoded Solidity custom-error payload (selector + ABI args)
 /// as a revert. Adds the copy cost for the payload to the accumulated gas,
 /// attributed to `Computation` to mirror the reference framework's

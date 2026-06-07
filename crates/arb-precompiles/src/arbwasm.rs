@@ -48,6 +48,16 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Err(_) => return crate::burn_all_revert(gas_limit),
     };
 
+    // activateProgram and codehashKeepalive are payable; the rest reject value.
+    if let Some(r) = crate::reject_nonpayable_value(
+        input.value,
+        input.data,
+        gas_limit,
+        &[[0x58, 0xc7, 0x80, 0xc2], [0xc6, 0x89, 0xba, 0xd5]],
+    ) {
+        return r;
+    }
+
     use IArbWasm::ArbWasmCalls as Calls;
     match &call {
         Calls::activateProgram(c) => return handle_activate_program(input, ctx, c.program),

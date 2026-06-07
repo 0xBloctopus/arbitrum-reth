@@ -67,6 +67,16 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Err(_) => return crate::burn_all_revert(gas_limit),
     };
 
+    // withdrawEth and sendTxToL1 are payable; every other method rejects value.
+    if let Some(r) = crate::reject_nonpayable_value(
+        input.value,
+        data,
+        gas_limit,
+        &[[0x25, 0xe1, 0x60, 0x63], [0x92, 0x8c, 0x16, 0x9a]],
+    ) {
+        return r;
+    }
+
     // `mapL1SenderContractAddressToL2Alias` is `pure` (no state access), so
     // the framework skips the `OpenArbosState` SLOAD; every other method is at
     // least `view` and pays for it.

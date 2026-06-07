@@ -60,6 +60,12 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     }
     let selector: [u8; 4] = [data[0], data[1], data[2], data[3]];
 
+    // No owner method is payable; reject any call value before the owner check.
+    if let Some(r) = crate::reject_nonpayable_value(input.value, data, gas_limit, &[]) {
+        ctx.restore_precompile_multi_gas(mg_snapshot);
+        return r;
+    }
+
     if let Err(e) = verify_owner(&mut input, &mut gas_used, ctx) {
         ctx.restore_precompile_multi_gas(mg_snapshot);
         return Err(e.into());
