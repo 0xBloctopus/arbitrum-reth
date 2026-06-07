@@ -94,6 +94,66 @@ fn value_to_payable_withdraweth_matches_nitro() {
         .run();
 }
 
+const ARBADDRESSTABLE: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x66,
+]);
+
+/// Runtime that `STATICCALL`s `precompile` with `selector` + one 32-byte `arg`,
+/// then stores the call's success flag at slot 0.
+fn staticcall_arg_runtime(precompile: u8, selector: [u8; 4], arg: [u8; 32]) -> Vec<u8> {
+    let mut c = Vec::new();
+    c.push(0x63); // PUSH4 selector
+    c.extend_from_slice(&selector);
+    c.extend_from_slice(&[0x60, 0xE0, 0x1b, 0x60, 0x00, 0x52]); // PUSH1 0xE0 SHL PUSH1 0 MSTORE
+    c.push(0x7f); // PUSH32 arg
+    c.extend_from_slice(&arg);
+    c.extend_from_slice(&[0x60, 0x04, 0x52]); // PUSH1 4 MSTORE
+                                              // STATICCALL operands (reverse): retLen retOff argLen(0x24) argOff addr gas
+    c.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x24, 0x60, 0x00]);
+    c.extend_from_slice(&[0x60, precompile]);
+    c.push(0x5a); // GAS
+    c.extend_from_slice(&[0xfa, 0x60, 0x00, 0x55, 0x00]); // STATICCALL PUSH1 0 SSTORE STOP
+    c
+}
+
+/// A state-modifying precompile method (`ArbAddressTable.register`) invoked via
+/// STATICCALL must be rejected identically on both nodes — arbreth must not
+/// write under read-only, and its gas/outcome must match the reference.
+#[test]
+#[ignore]
+fn staticcall_to_register_matches_nitro() {
+    let mut steps = Vec::new();
+    fund_interop_eoa(&mut steps);
+    let caller = eoa_create_addr(0);
+
+    let mut arg = [0u8; 32];
+    arg[12..].copy_from_slice(&[0xbe; 20]);
+    let runtime = staticcall_arg_runtime(0x66, selector4("register(address)"), arg);
+    let deploy = signed(
+        0,
+        None,
+        Bytes::from(wrap_init_code(&runtime)),
+        U256::ZERO,
+        DEPLOY_GAS_CAP,
+    )
+    .build()
+    .expect("deploy caller");
+    let idx = next_msg_idx();
+    steps.push(message_step(idx, deploy, idx));
+
+    let invoke = signed(1, Some(caller), Bytes::new(), U256::ZERO, INVOKE_GAS_CAP)
+        .build()
+        .expect("invoke caller");
+    let idx = next_msg_idx();
+    steps.push(message_step(idx, invoke, idx));
+
+    GuardedRun::new("staticcall_to_register", steps)
+        .diff_account(caller)
+        .diff_account(ARBADDRESSTABLE)
+        .diff_storage(caller, vec![U256::ZERO])
+        .run();
+}
+
 /// A non-payable ArbSys method (`arbBlockNumber`) called with value must behave
 /// identically on both nodes: the value transfer, the call's success, and every
 /// touched balance must match.

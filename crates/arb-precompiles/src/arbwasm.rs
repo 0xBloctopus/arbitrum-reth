@@ -57,6 +57,15 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     ) {
         return r;
     }
+    // State-modifying methods are rejected under STATICCALL/read-only.
+    if let Some(r) = crate::reject_static_write(
+        input.is_static,
+        input.data,
+        gas_limit,
+        &[[0x58, 0xc7, 0x80, 0xc2], [0xc6, 0x89, 0xba, 0xd5]],
+    ) {
+        return r;
+    }
 
     use IArbWasm::ArbWasmCalls as Calls;
     match &call {

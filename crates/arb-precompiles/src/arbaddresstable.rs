@@ -39,6 +39,15 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
         return r;
     }
+    // State-modifying methods are rejected under STATICCALL/read-only.
+    if let Some(r) = crate::reject_static_write(
+        input.is_static,
+        input.data,
+        gas_limit,
+        &[[0xf6, 0xa4, 0x55, 0xa2], [0x44, 0x20, 0xe4, 0x86]],
+    ) {
+        return r;
+    }
 
     use IArbAddressTable::ArbAddressTableCalls as Calls;
     let result = match call {

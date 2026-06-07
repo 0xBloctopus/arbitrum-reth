@@ -45,6 +45,19 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
         return r;
     }
+    // State-modifying methods are rejected under STATICCALL/read-only.
+    if let Some(r) = crate::reject_static_write(
+        input.is_static,
+        input.data,
+        gas_limit,
+        &[
+            [0xdf, 0x41, 0xe1, 0xe2],
+            [0x29, 0x14, 0x97, 0x99],
+            [0x5b, 0xe6, 0x88, 0x8b],
+        ],
+    ) {
+        return r;
+    }
 
     use IArbAggregator::ArbAggregatorCalls as Calls;
     let result = match call {

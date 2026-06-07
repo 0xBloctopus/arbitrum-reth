@@ -66,6 +66,28 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         return r;
     }
 
+    // Only the read-only owner queries are allowed under STATICCALL/read-only;
+    // every setter reverts before the owner check.
+    if let Some(r) = crate::reject_static_unless_read(
+        input.is_static,
+        data,
+        gas_limit,
+        &[
+            [0x26, 0xef, 0x7f, 0x68], // isChainOwner(address)
+            [0x51, 0x6b, 0x4e, 0x0f], // getAllChainOwners()
+            [0xc6, 0x86, 0xf4, 0xdb], // isNativeTokenOwner(address)
+            [0x3f, 0x86, 0x01, 0xe4], // getAllNativeTokenOwners()
+            [0xb3, 0x23, 0x52, 0xc3], // isTransactionFilterer(address)
+            [0x59, 0x5f, 0xbb, 0x5a], // getAllTransactionFilterers()
+            [0x3c, 0xaa, 0x5f, 0x12], // getFilteredFundsRecipient()
+            [0x2d, 0x91, 0x25, 0xe9], // getNetworkFeeAccount()
+            [0xee, 0x95, 0xa8, 0x24], // getInfraFeeAccount()
+        ],
+    ) {
+        ctx.restore_precompile_multi_gas(mg_snapshot);
+        return r;
+    }
+
     if let Err(e) = verify_owner(&mut input, &mut gas_used, ctx) {
         ctx.restore_precompile_multi_gas(mg_snapshot);
         return Err(e.into());

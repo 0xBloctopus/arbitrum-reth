@@ -39,6 +39,8 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
         return r;
     }
+    // State-modifying methods reject read-only context inside the inner
+    // handlers, so the free-access wrapper's gas override still applies.
 
     // Mimic the reference FreeAccessPrecompile wrapper: open ArbOS state and
     // check `filterers.IsMember(caller)` (2 SLOAD = 1600 gas total), without
@@ -210,6 +212,9 @@ fn handle_add_filtered_tx(
 ) -> PrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
+    if input.is_static {
+        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+    }
     load_accounts(input)?;
 
     if !is_transaction_filterer(input, gas_used, caller, ctx)? {
@@ -252,6 +257,9 @@ fn handle_delete_filtered_tx(
 ) -> PrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
+    if input.is_static {
+        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+    }
     load_accounts(input)?;
 
     if !is_transaction_filterer(input, gas_used, caller, ctx)? {

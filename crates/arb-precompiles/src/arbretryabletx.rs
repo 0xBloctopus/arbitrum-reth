@@ -67,6 +67,20 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
         return r;
     }
+    // State-modifying methods are rejected under STATICCALL/read-only.
+    if let Some(r) = crate::reject_static_write(
+        input.is_static,
+        input.data,
+        gas_limit,
+        &[
+            [0xed, 0xa1, 0x12, 0x2c],
+            [0xf0, 0xb2, 0x1a, 0x41],
+            [0xc4, 0xd2, 0x52, 0xf5],
+            [0xc9, 0xf9, 0x5d, 0x32],
+        ],
+    ) {
+        return r;
+    }
 
     use IArbRetryableTx::ArbRetryableTxCalls as Calls;
     let result = match call {

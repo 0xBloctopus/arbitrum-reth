@@ -237,6 +237,44 @@ pub fn reject_nonpayable_value(
     Some(burn_all_revert(gas_limit))
 }
 
+fn input_selector(data: &[u8]) -> [u8; 4] {
+    data.get(..4)
+        .and_then(|s| s.try_into().ok())
+        .unwrap_or([0u8; 4])
+}
+
+/// Reject a state-modifying method invoked under STATICCALL/read-only: the call
+/// reverts consuming all forwarded gas, matching the reference's upfront
+/// rejection of `write`/`payable` methods. `write` lists the state-modifying
+/// selectors; everything else on the precompile only reads. Call this only once
+/// the precompile is active for the current ArbOS version.
+pub fn reject_static_write(
+    is_static: bool,
+    data: &[u8],
+    gas_limit: u64,
+    write: &[[u8; 4]],
+) -> Option<PrecompileResult> {
+    if is_static && write.contains(&input_selector(data)) {
+        return Some(burn_all_revert(gas_limit));
+    }
+    None
+}
+
+/// Like [`reject_static_write`] but for a mostly-writing precompile: under
+/// read-only, reject every method except the listed read-only (view/pure)
+/// selectors.
+pub fn reject_static_unless_read(
+    is_static: bool,
+    data: &[u8],
+    gas_limit: u64,
+    reads: &[[u8; 4]],
+) -> Option<PrecompileResult> {
+    if is_static && !reads.contains(&input_selector(data)) {
+        return Some(burn_all_revert(gas_limit));
+    }
+    None
+}
+
 /// Emit a pre-encoded Solidity custom-error payload (selector + ABI args)
 /// as a revert. Adds the copy cost for the payload to the accumulated gas,
 /// attributed to `Computation` to mirror the reference framework's

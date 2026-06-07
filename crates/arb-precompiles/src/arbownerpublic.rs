@@ -39,6 +39,15 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
         return r;
     }
+    // State-modifying methods are rejected under STATICCALL/read-only.
+    if let Some(r) = crate::reject_static_write(
+        input.is_static,
+        input.data,
+        gas_limit,
+        &[[0x6f, 0xe8, 0x63, 0x73]],
+    ) {
+        return r;
+    }
 
     use IArbOwnerPublic::ArbOwnerPublicCalls as Calls;
     let result = match call {

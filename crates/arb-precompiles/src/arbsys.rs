@@ -76,6 +76,15 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     ) {
         return r;
     }
+    // State-modifying methods are rejected under STATICCALL/read-only.
+    if let Some(r) = crate::reject_static_write(
+        input.is_static,
+        input.data,
+        gas_limit,
+        &[[0x25, 0xe1, 0x60, 0x63], [0x92, 0x8c, 0x16, 0x9a]],
+    ) {
+        return r;
+    }
 
     // `mapL1SenderContractAddressToL2Alias` is `pure` (no state access), so
     // the framework skips the `OpenArbosState` SLOAD; every other method is at
