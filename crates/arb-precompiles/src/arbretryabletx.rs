@@ -544,10 +544,13 @@ fn compute_actual_backlog_cost(
             return Ok(total);
         }
     }
-    Ok(legacy_actual_backlog_cost(
-        ctx.block.current_gas_backlog(),
-        gas_to_donate,
-    ))
+    let mut cost = legacy_actual_backlog_cost(ctx.block.current_gas_backlog(), gas_to_donate);
+    if arbos_version >= arb_ver::ARBOS_VERSION_50 {
+        // The gas model reads the constraints length before the legacy backlog
+        // update, matching the reservation in compute_backlog_update_cost.
+        cost += SLOAD_GAS;
+    }
+    Ok(cost)
 }
 
 fn legacy_actual_backlog_cost(current_backlog: u64, gas_to_donate: u64) -> u64 {
