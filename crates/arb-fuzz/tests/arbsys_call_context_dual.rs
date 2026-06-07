@@ -16,6 +16,10 @@ const ARBSYS: Address = Address::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x64,
 ]);
 
+const ARBFILTEREDTXMANAGER: Address = Address::new([
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x74,
+]);
+
 /// Runtime that `DELEGATECALL`s `precompile` with `selector` (no args), then
 /// stores the call's success flag at slot 0.
 fn delegatecall_runtime(precompile: u8, selector: [u8; 4]) -> Vec<u8> {
@@ -236,6 +240,49 @@ fn value_to_nonpayable_arbsys_matches_nitro() {
     GuardedRun::new("value_to_nonpayable_arbsys", steps)
         .diff_account(caller)
         .diff_account(ARBSYS)
+        .diff_storage(caller, vec![U256::ZERO])
+        .run();
+}
+
+/// ArbFilteredTransactionsManager is wrapped in the free-access wrapper, which
+/// discards the inner method's gas and charges only its own membership read. So
+/// value sent to a non-payable method reverts at the wrapper's cost, not by
+/// burning all forwarded gas — the caller keeps the unused gas, and the invoke
+/// tx's gas must match the reference.
+#[test]
+#[ignore]
+fn value_to_filtered_tx_manager_matches_nitro() {
+    let mut steps = Vec::new();
+    fund_interop_eoa(&mut steps);
+    let caller = eoa_create_addr(0);
+
+    let runtime = call_arg_with_value_runtime(
+        0x74,
+        selector4("isTransactionFiltered(bytes32)"),
+        [0x11u8; 32],
+        100,
+    );
+    let deploy = signed(
+        0,
+        None,
+        Bytes::from(wrap_init_code(&runtime)),
+        U256::from(1000u64),
+        DEPLOY_GAS_CAP,
+    )
+    .build()
+    .expect("deploy caller");
+    let idx = next_msg_idx();
+    steps.push(message_step(idx, deploy, idx));
+
+    let invoke = signed(1, Some(caller), Bytes::new(), U256::ZERO, INVOKE_GAS_CAP)
+        .build()
+        .expect("invoke caller");
+    let idx = next_msg_idx();
+    steps.push(message_step(idx, invoke, idx));
+
+    GuardedRun::new("value_to_filtered_tx_manager", steps)
+        .diff_account(caller)
+        .diff_account(ARBFILTEREDTXMANAGER)
         .diff_storage(caller, vec![U256::ZERO])
         .run();
 }

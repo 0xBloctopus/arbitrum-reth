@@ -35,12 +35,8 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
 
     let gas_limit = input.gas;
 
-    // No method on this precompile is payable; reject any call value.
-    if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
-        return r;
-    }
-    // State-modifying methods reject read-only context inside the inner
-    // handlers, so the free-access wrapper's gas override still applies.
+    // Value, read-only and delegate rejections are handled inside the inner
+    // handlers so the free-access wrapper's gas override still applies.
 
     // Mimic the reference FreeAccessPrecompile wrapper: open ArbOS state and
     // check `filterers.IsMember(caller)` (2 SLOAD = 1600 gas total), without
@@ -178,8 +174,8 @@ fn handle_is_tx_filtered(
     ctx: &ArbPrecompileCtx,
 ) -> PrecompileResult {
     let gas_limit = input.gas;
-    // A view method may not be reached via DELEGATECALL.
-    if input.target_address != input.bytecode_address {
+    // A view method rejects call value and DELEGATECALL.
+    if !input.value.is_zero() || input.target_address != input.bytecode_address {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
     load_accounts(input)?;
@@ -216,8 +212,8 @@ fn handle_add_filtered_tx(
 ) -> PrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
-    // Reject read-only (STATICCALL) and DELEGATECALL context before writing.
-    if input.is_static || input.target_address != input.bytecode_address {
+    // Value, read-only and delegate context revert via the wrapper's gas.
+    if !input.value.is_zero() || input.is_static || input.target_address != input.bytecode_address {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
     load_accounts(input)?;
@@ -262,8 +258,8 @@ fn handle_delete_filtered_tx(
 ) -> PrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
-    // Reject read-only (STATICCALL) and DELEGATECALL context before writing.
-    if input.is_static || input.target_address != input.bytecode_address {
+    // Value, read-only and delegate context revert via the wrapper's gas.
+    if !input.value.is_zero() || input.is_static || input.target_address != input.bytecode_address {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
     load_accounts(input)?;
