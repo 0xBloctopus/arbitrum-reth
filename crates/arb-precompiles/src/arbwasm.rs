@@ -531,6 +531,19 @@ fn handle_activate_program(
     };
     crate::charge_storage_read(&mut gas_used, ctx, SLOAD_GAS);
 
+    // An already-current program short-circuits before reconstructing its WASM,
+    // so a fragmented root is not billed for fragment reads it never needs.
+    if existing_program.version == params.version
+        && existing_program.age_seconds <= (params.expiry_days as u64) * 86400
+    {
+        return revert_sol_error(
+            &mut gas_used,
+            ctx,
+            IArbWasm::ProgramUpToDate {}.abi_encode(),
+            input.gas,
+        );
+    }
+
     if code_bytes.is_empty() {
         return revert_sol_error(
             &mut gas_used,
@@ -616,18 +629,6 @@ fn handle_activate_program(
     };
 
     let was_cached = existing_program.cached;
-
-    if existing_program.version == params.version {
-        let age = existing_program.age_seconds;
-        if age <= (params.expiry_days as u64) * 86400 {
-            return revert_sol_error(
-                &mut gas_used,
-                ctx,
-                IArbWasm::ProgramUpToDate {}.abi_encode(),
-                input.gas,
-            );
-        }
-    }
 
     let gas_available = input.gas.saturating_sub(gas_used);
     let mut gas_for_prover = gas_available;
@@ -840,15 +841,6 @@ fn handle_codehash_keepalive(
             input.gas,
         );
     }
-    let age = hours_to_age(time, program.activated_at);
-    if age > (params.expiry_days as u64) * 86400 {
-        return revert_sol_error(
-            &mut gas_used,
-            ctx,
-            IArbWasm::ProgramExpired { ageInSeconds: age }.abi_encode(),
-            input.gas,
-        );
-    }
     if program.version != params.version {
         return revert_sol_error(
             &mut gas_used,
@@ -858,6 +850,15 @@ fn handle_codehash_keepalive(
                 stylusVersion: params.version,
             }
             .abi_encode(),
+            input.gas,
+        );
+    }
+    let age = hours_to_age(time, program.activated_at);
+    if age > (params.expiry_days as u64) * 86400 {
+        return revert_sol_error(
+            &mut gas_used,
+            ctx,
+            IArbWasm::ProgramExpired { ageInSeconds: age }.abi_encode(),
             input.gas,
         );
     }
