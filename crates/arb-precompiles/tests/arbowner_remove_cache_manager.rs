@@ -124,8 +124,11 @@ fn body_gas_threshold_pins_reset_pricing() {
         !run(REMOVE_GAS).assert_ok().reverted,
         "succeeds at exactly the billed body gas",
     );
-    assert!(
-        run(REMOVE_GAS - 1).result.is_err(),
-        "one gas short out-of-gases",
-    );
+    // One gas short, the access-controlled body overruns its budget: it reverts
+    // (the removal rolls back) but bills the owner zero, never consuming the
+    // forwarded gas.
+    let short = run(REMOVE_GAS - 1);
+    let out = short.assert_ok();
+    assert!(out.reverted, "one gas short reverts");
+    assert_eq!(out.gas_used, 0, "the owner is billed zero even over budget");
 }
