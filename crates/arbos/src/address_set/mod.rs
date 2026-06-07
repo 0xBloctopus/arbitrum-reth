@@ -8,8 +8,7 @@ use arb_storage::{
 mod error;
 pub use error::AddressSetError;
 
-/// Per-operation ArbOS storage gas, matching the storage burner: reads cost a
-/// warm SLOAD; writes cost a full set or, when storing zero, a reset.
+/// Flat ArbOS storage gas per slot read/write (no EVM cold/warm or refunds).
 const STORAGE_READ_COST: u64 = 800;
 const STORAGE_WRITE_COST: u64 = 20_000;
 const STORAGE_WRITE_ZERO_COST: u64 = 5_000;
@@ -157,9 +156,7 @@ impl<D> AddressSet<'_, D> {
         Ok(self.size.set(backend, size + 1)?)
     }
 
-    /// Removes `addr`, accumulating the per-operation storage gas into `gas`
-    /// so callers charge the same value-dependent cost the storage burner
-    /// would (clears bill a reset, not a full set).
+    /// Removes `addr`, adding the value-dependent storage gas it consumes to `gas`.
     pub fn remove<B: StorageBackend>(
         &self,
         backend: &mut B,

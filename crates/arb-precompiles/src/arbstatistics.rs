@@ -30,11 +30,9 @@ fn handler(input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResu
         Ok(c) => c,
         Err(_) => return crate::burn_all_revert(gas_limit),
     };
-    // No method on this precompile is payable; reject any call value.
     if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
         return r;
     }
-    // Non-pure methods are rejected under DELEGATECALL (acting as another address).
     if let Some(r) = crate::reject_delegate_nonpure(
         input.target_address != input.bytecode_address,
         input.data,

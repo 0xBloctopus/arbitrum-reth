@@ -2387,9 +2387,8 @@ where
             }
         }
 
-        // Capture EVM-modified addresses for dirty tracking before commit consumes
-        // output. The fee collectors live in ArbOS state, so they can only have
-        // changed if this tx touched it (normal txs never do).
+        // The fee collectors live in ArbOS state, so they can only have changed
+        // if this tx touched it (normal txs never do).
         let arbos_state_touched = output
             .result
             .state
@@ -2398,23 +2397,20 @@ where
             self.touched_accounts.insert(*addr);
         }
 
-        // Inner executor builds receipt with the adjusted gas_used and commits state.
         let gas_used = self.inner.commit_transaction(output)?;
 
-        // The fee collectors are read at fee-distribution time, not block start:
-        // an owner changing them takes effect within the same block, including
-        // the setting tx's own fee. Refresh from the just-committed state before
-        // distributing this tx's fees — only when it could have changed them.
+        // Fee collectors take effect within the block they're set, including the
+        // setting tx's own fee, so refresh them before distributing this tx's fees.
         if arbos_state_touched {
             {
                 let db: &mut State<DB> = self.inner.evm_mut().db_mut();
                 if let Ok(arb_state) = ArbosState::open(db, SystemBurner::new(None, false)) {
                     // SAFETY: see `Storage::state_mut()` invariant.
-                    let sr = unsafe { arb_state.backing_storage.state_mut() };
-                    if let Ok(net) = arb_state.network_fee_account(sr) {
+                    let state_ref = unsafe { arb_state.backing_storage.state_mut() };
+                    if let Ok(net) = arb_state.network_fee_account(state_ref) {
                         self.arb_ctx.network_fee_account = net;
                     }
-                    if let Ok(infra) = arb_state.infra_fee_account(sr) {
+                    if let Ok(infra) = arb_state.infra_fee_account(state_ref) {
                         self.arb_ctx.infra_fee_account = infra;
                     }
                 }

@@ -36,8 +36,7 @@ const SLOAD_GAS: u64 = 800;
 const SSTORE_GAS: u64 = 20_000;
 const SSTORE_ZERO_GAS: u64 = 5_000;
 const COPY_GAS: u64 = 3;
-/// The packed StylusParams word is read as a single warm access, not a cold
-/// SLOAD, matching the backing store's warm-cached treatment of that slot.
+/// StylusParams is read as a warm access, not a cold SLOAD.
 const WARM_SLOAD_GAS: u64 = 100;
 
 pub fn create_arbowner_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
@@ -60,7 +59,6 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     }
     let selector: [u8; 4] = [data[0], data[1], data[2], data[3]];
 
-    // No owner method is payable; reject any call value before the owner check.
     if let Some(r) = crate::reject_nonpayable_value(input.value, data, gas_limit, &[]) {
         ctx.restore_precompile_multi_gas(mg_snapshot);
         return r;
@@ -555,10 +553,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Err(_) => Ok(PrecompileOutput::new_reverted(0, Default::default())),
     };
     ctx.restore_precompile_multi_gas(mg_snapshot);
-    // Access-controlled methods never charge the owner. A body that would
-    // exceed the forwarded budget reverts — its writes roll back — but bills
-    // zero gas, rather than out-of-gassing and burning the whole forwarded
-    // amount.
+    // Over-budget reverts billing zero gas, not out-of-gas burning the forwarded amount.
     if gas_used > gas_limit {
         return Ok(PrecompileOutput::new_reverted(0, Default::default()));
     }
@@ -1808,7 +1803,7 @@ fn handle_add_to_set_with_feature_check(
         emit_address_event(input, topic0, addr);
     }
 
-    // 1 feature-time read + Add's 3 reads, 3 set-writes, empty return.
+    // feature-time read + Add's 3 reads/3 writes.
     crate::charge_precompile_gas(gas_used, 4 * SLOAD_GAS + 3 * SSTORE_GAS);
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
@@ -2156,9 +2151,8 @@ fn handle_set_chain_config(
         .set_chain_config(internals, &config_bytes)
         .map_err(ArbPrecompileError::fatal)?;
 
-    // Mirror the bytes store: read the old length, clear the old data slots and
-    // the length slot (resets), then write the new length, full data words, and
-    // a trailing word (a reset when the length is a multiple of 32).
+    // Bytes store: clear old slots (resets), then write new length, full words, and a trailing
+    // word.
     let bytes_len = bytes_len as u64;
     let old_data_slots = old_len.div_ceil(32);
     let new_full_words = bytes_len / 32;

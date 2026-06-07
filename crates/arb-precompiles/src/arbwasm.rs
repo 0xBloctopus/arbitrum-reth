@@ -48,7 +48,6 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Err(_) => return crate::burn_all_revert(gas_limit),
     };
 
-    // activateProgram and codehashKeepalive are payable; the rest reject value.
     if let Some(r) = crate::reject_nonpayable_value(
         input.value,
         input.data,
@@ -57,7 +56,6 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     ) {
         return r;
     }
-    // State-modifying methods are rejected under STATICCALL/read-only.
     if let Some(r) = crate::reject_static_write(
         input.is_static,
         input.data,
@@ -66,7 +64,6 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     ) {
         return r;
     }
-    // Non-pure methods are rejected under DELEGATECALL (acting as another address).
     if let Some(r) = crate::reject_delegate_nonpure(
         input.target_address != input.bytecode_address,
         input.data,
@@ -376,8 +373,7 @@ fn load_params_and_program(
     Ok((params, program))
 }
 
-/// Read the code hash for an account address, billing the fixed storage-read
-/// charge the backing store applies to every code-hash lookup.
+/// Read an account's code hash, charging the per-lookup code-hash storage read.
 fn get_account_codehash(
     input: &mut PrecompileInput<'_>,
     ctx: &ArbPrecompileCtx,

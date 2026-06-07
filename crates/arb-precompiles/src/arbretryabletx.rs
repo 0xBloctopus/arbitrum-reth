@@ -63,11 +63,9 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         Ok(c) => c,
         Err(_) => return crate::burn_all_revert(gas_limit),
     };
-    // No method on this precompile is payable; reject any call value.
     if let Some(r) = crate::reject_nonpayable_value(input.value, input.data, gas_limit, &[]) {
         return r;
     }
-    // State-modifying methods are rejected under STATICCALL/read-only.
     if let Some(r) = crate::reject_static_write(
         input.is_static,
         input.data,
@@ -81,7 +79,6 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
     ) {
         return r;
     }
-    // Non-pure methods are rejected under DELEGATECALL (acting as another address).
     if let Some(r) = crate::reject_delegate_nonpure(
         input.target_address != input.bytecode_address,
         input.data,
@@ -437,8 +434,6 @@ fn handle_cancel(
     let caller = input.caller;
     let now = current_timestamp(input);
 
-    // A retryable cannot modify itself: reject cancelling the ticket currently
-    // being redeemed.
     {
         let current_retryable = ctx.tx_snapshot().retryable_id;
         if !current_retryable.is_zero() && current_retryable == ticket_id {
@@ -475,18 +470,13 @@ fn handle_cancel(
     ));
 
     let calldata_words = calldata_size.div_ceil(32);
-    // The calldata clear always resets the length slot (one reset) plus one per
-    // content word, so the length-slot reset is charged even for empty calldata.
+    // Length-slot reset is charged even for empty calldata.
     let clear_bytes_cost = (calldata_words + 1) * SSTORE_ZERO_GAS;
     let event_cost = LOG_GAS + 2 * LOG_TOPIC_GAS;
 
-    // Init already covered the framework SLOAD; body adds 5 retryable
-    // SLOADs (lookup + auth + state reads), 7 SSTORE-resets for clearing
-    // the retryable record + the calldata-byte zeroing.
     crate::charge_storage_read(gas_used, ctx, 5 * SLOAD_GAS);
     crate::charge_storage_write(gas_used, ctx, 7 * SSTORE_ZERO_GAS + clear_bytes_cost);
     crate::charge_history_growth(gas_used, ctx, event_cost);
-    // No return value: result cost covers zero words.
 
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
@@ -556,8 +546,7 @@ fn compute_actual_backlog_cost(
     }
     let mut cost = legacy_actual_backlog_cost(ctx.block.current_gas_backlog(), gas_to_donate);
     if arbos_version >= arb_ver::ARBOS_VERSION_50 {
-        // The gas model reads the constraints length before the legacy backlog
-        // update, matching the reservation in compute_backlog_update_cost.
+        // Matches the constraints-length read reserved in compute_backlog_update_cost.
         cost += SLOAD_GAS;
     }
     Ok(cost)
