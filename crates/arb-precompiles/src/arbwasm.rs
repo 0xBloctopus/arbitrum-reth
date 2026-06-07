@@ -238,7 +238,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             )
         }
         Calls::programVersion(c) => {
-            let codehash = get_account_codehash(&mut input, c.program)?;
+            let codehash = get_account_codehash(&mut input, ctx, &mut gas_used, c.program)?;
             let (params, program) =
                 load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
             if let Err(r) = validate_active_program(
@@ -253,7 +253,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(program.version))
         }
         Calls::programInitGas(c) => {
-            let codehash = get_account_codehash(&mut input, c.program)?;
+            let codehash = get_account_codehash(&mut input, ctx, &mut gas_used, c.program)?;
             let (params, program) =
                 load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
             if let Err(r) = validate_active_program(
@@ -281,7 +281,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             )
         }
         Calls::programMemoryFootprint(c) => {
-            let codehash = get_account_codehash(&mut input, c.program)?;
+            let codehash = get_account_codehash(&mut input, ctx, &mut gas_used, c.program)?;
             let (params, program) =
                 load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
             if let Err(r) = validate_active_program(
@@ -296,7 +296,7 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
             ok_u256(&mut gas_used, ctx, input.gas, U256::from(program.footprint))
         }
         Calls::programTimeLeft(c) => {
-            let codehash = get_account_codehash(&mut input, c.program)?;
+            let codehash = get_account_codehash(&mut input, ctx, &mut gas_used, c.program)?;
             let (params, program) =
                 load_params_and_program(&mut input, ctx, &mut gas_used, codehash)?;
             if let Err(r) = validate_active_program(
@@ -376,19 +376,26 @@ fn load_params_and_program(
     Ok((params, program))
 }
 
-/// Get the code hash for an account address.
+/// Read the code hash for an account address, billing the fixed storage-read
+/// charge the backing store applies to every code-hash lookup.
 fn get_account_codehash(
     input: &mut PrecompileInput<'_>,
+    ctx: &ArbPrecompileCtx,
+    gas_used: &mut u64,
     address: Address,
 ) -> Result<B256, ArbPrecompileError> {
-    crate::without_access_list_effect(input.internals_mut(), |internals| {
-        Ok(internals
-            .load_account(address)
-            .map_err(ArbPrecompileError::fatal)?
-            .data
-            .info
-            .code_hash)
-    })
+    let codehash = crate::without_access_list_effect(input.internals_mut(), |internals| {
+        Ok::<_, ArbPrecompileError>(
+            internals
+                .load_account(address)
+                .map_err(ArbPrecompileError::fatal)?
+                .data
+                .info
+                .code_hash,
+        )
+    })?;
+    crate::charge_storage_read(gas_used, ctx, STORAGE_CODE_HASH_COST);
+    Ok(codehash)
 }
 
 /// Returns ProgramNotActivated, ProgramNeedsUpgrade(progV, paramsV),
