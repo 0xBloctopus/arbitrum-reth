@@ -451,7 +451,7 @@ fn handle_cancel(
     crate::charge_storage_read(gas_used, ctx, 5 * SLOAD_GAS);
     crate::charge_storage_write(gas_used, ctx, 7 * SSTORE_ZERO_GAS + clear_bytes_cost);
     crate::charge_history_growth(gas_used, ctx, event_cost);
-    crate::charge_computation(gas_used, ctx, COPY_GAS);
+    // No return value: result cost covers zero words.
 
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),

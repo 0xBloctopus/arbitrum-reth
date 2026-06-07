@@ -538,12 +538,12 @@ fn cancel_with_empty_calldata_charges_full_formula() {
             U256::from_be_slice(beneficiary.as_slice()),
         )
         .call(arbretryabletx, &calldata("cancel(bytes32)", &[ticket_id]));
-    // argsCost(3) + 6 SLOAD + 7 SSTORE_ZERO + LOG2(375+750) + resultCost(3)
-    //   = 3 + 4800 + 35000 + 1125 + 3 = 40_931.
+    // argsCost(3) + 6 SLOAD + 7 SSTORE_ZERO + LOG2(375+750); the empty return
+    // carries no result cost = 3 + 4800 + 35000 + 1125 = 40_928.
     let event_cost = LOG_GAS + 2 * LOG_TOPIC_GAS;
     assert_eq!(
         run.gas_used(),
-        6 * SLOAD_GAS + 7 * SSTORE_ZERO_GAS + event_cost + 2 * COPY_GAS,
+        6 * SLOAD_GAS + 7 * SSTORE_ZERO_GAS + event_cost + COPY_GAS,
     );
 }
 

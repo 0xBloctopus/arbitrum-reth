@@ -34,6 +34,7 @@ const L1_PRICER_FUNDS_POOL_ADDRESS: Address = Address::new([
 
 const SLOAD_GAS: u64 = 800;
 const SSTORE_GAS: u64 = 20_000;
+const SSTORE_ZERO_GAS: u64 = 5_000;
 const COPY_GAS: u64 = 3;
 
 pub fn create_arbowner_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
@@ -2113,10 +2114,27 @@ fn handle_set_chain_config(
         .set_chain_config(internals, &config_bytes)
         .map_err(ArbPrecompileError::fatal)?;
 
-    let old_slots = old_len.div_ceil(32);
-    let new_slots = (bytes_len as u64).div_ceil(32);
-    let total_stores = old_slots + 1 + new_slots;
-    let extra = total_stores * SSTORE_GAS + SLOAD_GAS + COPY_GAS;
+    // Mirror the bytes store: read the old length, clear the old data slots and
+    // the length slot (resets), then write the new length, full data words, and
+    // a trailing word (a reset when the length is a multiple of 32).
+    let bytes_len = bytes_len as u64;
+    let old_data_slots = old_len.div_ceil(32);
+    let new_full_words = bytes_len / 32;
+    let len_write = if bytes_len > 0 {
+        SSTORE_GAS
+    } else {
+        SSTORE_ZERO_GAS
+    };
+    let tail_write = if bytes_len.is_multiple_of(32) {
+        SSTORE_ZERO_GAS
+    } else {
+        SSTORE_GAS
+    };
+    let extra = SLOAD_GAS
+        + (old_data_slots + 1) * SSTORE_ZERO_GAS
+        + len_write
+        + new_full_words * SSTORE_GAS
+        + tail_write;
     crate::charge_precompile_gas(gas_used, extra);
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
