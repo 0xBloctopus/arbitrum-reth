@@ -2388,12 +2388,11 @@ where
         }
 
         // The fee collectors live in ArbOS state, so they can only have changed
-        // if this tx touched it (normal txs never do).
-        let arbos_state_touched = output
-            .result
-            .state
-            .contains_key(&arb_storage::ARBOS_STATE_ADDRESS);
+        // if this tx touched it (normal txs never do). Fold the check into the
+        // dirty-tracking pass that already walks the modified accounts.
+        let mut arbos_state_touched = false;
         for addr in output.result.state.keys() {
+            arbos_state_touched |= *addr == arb_storage::ARBOS_STATE_ADDRESS;
             self.touched_accounts.insert(*addr);
         }
 
