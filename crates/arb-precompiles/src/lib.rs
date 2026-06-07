@@ -275,6 +275,23 @@ pub fn reject_static_unless_read(
     None
 }
 
+/// Reject any state-accessing (non-`pure`) method invoked via DELEGATECALL: a
+/// precompile may only use its state-access powers when acting as itself, so
+/// the call reverts consuming all forwarded gas. `is_delegate` is true when the
+/// call target differs from the precompile's own address; `pure` lists the
+/// stateless selectors that remain callable.
+pub fn reject_delegate_nonpure(
+    is_delegate: bool,
+    data: &[u8],
+    gas_limit: u64,
+    pure: &[[u8; 4]],
+) -> Option<PrecompileResult> {
+    if is_delegate && !pure.contains(&input_selector(data)) {
+        return Some(burn_all_revert(gas_limit));
+    }
+    None
+}
+
 /// Emit a pre-encoded Solidity custom-error payload (selector + ABI args)
 /// as a revert. Adds the copy cost for the payload to the accumulated gas,
 /// attributed to `Computation` to mirror the reference framework's

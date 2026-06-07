@@ -43,6 +43,15 @@ fn handler(input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> PrecompileResu
     ) {
         return r;
     }
+    // Non-pure methods are rejected under DELEGATECALL (acting as another address).
+    if let Some(r) = crate::reject_delegate_nonpure(
+        input.target_address != input.bytecode_address,
+        input.data,
+        gas_limit,
+        &[],
+    ) {
+        return r;
+    }
 
     use IArbFunctionTable::ArbFunctionTableCalls;
     let result = match call {

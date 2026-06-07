@@ -88,6 +88,17 @@ fn handler(mut input: PrecompileInput<'_>, ctx: &ArbPrecompileCtx) -> Precompile
         return r;
     }
 
+    // No owner method is pure, so none may be reached via DELEGATECALL.
+    if let Some(r) = crate::reject_delegate_nonpure(
+        input.target_address != input.bytecode_address,
+        data,
+        gas_limit,
+        &[],
+    ) {
+        ctx.restore_precompile_multi_gas(mg_snapshot);
+        return r;
+    }
+
     if let Err(e) = verify_owner(&mut input, &mut gas_used, ctx) {
         ctx.restore_precompile_multi_gas(mg_snapshot);
         return Err(e.into());

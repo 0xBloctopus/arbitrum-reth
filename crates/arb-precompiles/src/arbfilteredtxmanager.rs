@@ -178,6 +178,10 @@ fn handle_is_tx_filtered(
     ctx: &ArbPrecompileCtx,
 ) -> PrecompileResult {
     let gas_limit = input.gas;
+    // A view method may not be reached via DELEGATECALL.
+    if input.target_address != input.bytecode_address {
+        return Err(ArbPrecompileError::empty_revert(*gas_used).into());
+    }
     load_accounts(input)?;
 
     let internals = input.internals_mut();
@@ -212,7 +216,8 @@ fn handle_add_filtered_tx(
 ) -> PrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
-    if input.is_static {
+    // Reject read-only (STATICCALL) and DELEGATECALL context before writing.
+    if input.is_static || input.target_address != input.bytecode_address {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
     load_accounts(input)?;
@@ -257,7 +262,8 @@ fn handle_delete_filtered_tx(
 ) -> PrecompileResult {
     let gas_limit = input.gas;
     let caller = input.caller;
-    if input.is_static {
+    // Reject read-only (STATICCALL) and DELEGATECALL context before writing.
+    if input.is_static || input.target_address != input.bytecode_address {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
     load_accounts(input)?;

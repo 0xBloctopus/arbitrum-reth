@@ -16,6 +16,56 @@ const ARBSYS: Address = Address::new([
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x64,
 ]);
 
+/// Runtime that `DELEGATECALL`s `precompile` with `selector` (no args), then
+/// stores the call's success flag at slot 0.
+fn delegatecall_runtime(precompile: u8, selector: [u8; 4]) -> Vec<u8> {
+    let mut c = Vec::new();
+    c.push(0x63); // PUSH4 selector
+    c.extend_from_slice(&selector);
+    c.extend_from_slice(&[0x60, 0xE0, 0x1b, 0x60, 0x00, 0x52]); // PUSH1 0xE0 SHL PUSH1 0 MSTORE
+                                                                // DELEGATECALL operands (reverse): retLen retOff argLen argOff addr gas
+    c.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x60, 0x04, 0x60, 0x00]);
+    c.extend_from_slice(&[0x60, precompile]);
+    c.push(0x5a); // GAS
+    c.extend_from_slice(&[0xf4, 0x60, 0x00, 0x55, 0x00]); // DELEGATECALL PUSH1 0 SSTORE STOP
+    c
+}
+
+/// A non-pure ArbSys method (`arbBlockNumber`, view) invoked via DELEGATECALL
+/// must be rejected identically on both nodes — a precompile may only use its
+/// state-access powers when acting as itself.
+#[test]
+#[ignore]
+fn delegatecall_to_view_matches_nitro() {
+    let mut steps = Vec::new();
+    fund_interop_eoa(&mut steps);
+    let caller = eoa_create_addr(0);
+
+    let runtime = delegatecall_runtime(0x64, selector4("arbBlockNumber()"));
+    let deploy = signed(
+        0,
+        None,
+        Bytes::from(wrap_init_code(&runtime)),
+        U256::ZERO,
+        DEPLOY_GAS_CAP,
+    )
+    .build()
+    .expect("deploy caller");
+    let idx = next_msg_idx();
+    steps.push(message_step(idx, deploy, idx));
+
+    let invoke = signed(1, Some(caller), Bytes::new(), U256::ZERO, INVOKE_GAS_CAP)
+        .build()
+        .expect("invoke caller");
+    let idx = next_msg_idx();
+    steps.push(message_step(idx, invoke, idx));
+
+    GuardedRun::new("delegatecall_to_view", steps)
+        .diff_account(caller)
+        .diff_storage(caller, vec![U256::ZERO])
+        .run();
+}
+
 /// Runtime that `CALL`s `precompile` with `selector` (no args) forwarding all
 /// gas and `value` wei, then stores the call's success flag at slot 0.
 fn call_with_value_runtime(precompile: u8, selector: [u8; 4], value: u8) -> Vec<u8> {

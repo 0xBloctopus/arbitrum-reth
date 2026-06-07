@@ -738,18 +738,19 @@ fn wrap_init(runtime: &[u8]) -> Vec<u8> {
     c
 }
 
-/// Runtime that copies its calldata to memory, `STATICCALL`s `precompile` with
-/// it, and stores the call's success flag at slot 0.
-fn staticcall_forwarder(precompile: Address) -> Vec<u8> {
+/// Runtime that copies its calldata to memory, calls `precompile` via the given
+/// `op` (0xfa STATICCALL or 0xf4 DELEGATECALL) with it, and stores the call's
+/// success flag at slot 0.
+fn ctx_forwarder(precompile: Address, op: u8) -> Vec<u8> {
     let mut c = Vec::new();
     // CALLDATACOPY(dest=0, off=0, size=CALLDATASIZE)
     c.extend_from_slice(&[0x36, 0x60, 0x00, 0x60, 0x00, 0x37]);
-    // STATICCALL(gas, addr, argOff=0, argLen=CALLDATASIZE, retOff=0, retLen=0)
+    // OP(gas, addr, argOff=0, argLen=CALLDATASIZE, retOff=0, retLen=0)
     c.extend_from_slice(&[0x60, 0x00, 0x60, 0x00, 0x36, 0x60, 0x00]);
     c.push(0x73);
     c.extend_from_slice(precompile.as_slice());
     c.push(0x5a); // GAS
-    c.extend_from_slice(&[0xfa, 0x60, 0x00, 0x55, 0x00]); // STATICCALL PUSH1 0 SSTORE STOP
+    c.extend_from_slice(&[op, 0x60, 0x00, 0x55, 0x00]); // OP PUSH1 0 SSTORE STOP
     c
 }
 
@@ -763,6 +764,16 @@ fn create_addr(deployer: Address, nonce: u64) -> Address {
 #[test]
 #[ignore]
 fn static_matrix() {
+    run_ctx_matrix(0xfa, "STATIC");
+}
+
+#[test]
+#[ignore]
+fn delegate_matrix() {
+    run_ctx_matrix(0xf4, "DELEGATE");
+}
+
+fn run_ctx_matrix(op: u8, tag: &str) {
     let nodes = shared_dual_exec();
     let mut nodes = nodes.lock().expect("dual_exec mutex");
     let mut failures: Vec<String> = Vec::new();
@@ -820,13 +831,13 @@ fn static_matrix() {
             .build()
         };
 
-        let deploy = tx(0, None, wrap_init(&staticcall_forwarder(precompile))).expect("deploy");
+        let deploy = tx(0, None, wrap_init(&ctx_forwarder(precompile, op))).expect("deploy");
         let invoke = tx(1, Some(forwarder), calldata).expect("invoke");
         let invoke_hash = arb_test_harness::messaging::signed_l2_tx_hash(&invoke);
 
         let scenario = Scenario {
-            name: format!("static_{label}"),
-            description: format!("STATICCALL to {label}"),
+            name: format!("{tag}_{label}"),
+            description: format!("{tag} to {label}"),
             setup: ScenarioSetup {
                 l2_chain_id: FUZZ_L2_CHAIN_ID,
                 arbos_version: arb_fuzz::shared_nodes::fuzz_arbos_version(),
@@ -885,8 +896,8 @@ fn static_matrix() {
 
     if !failures.is_empty() {
         for f in &failures {
-            eprintln!("STATIC DIVERGENCE: {f}");
+            eprintln!("{tag} DIVERGENCE: {f}");
         }
-        panic!("{} static-matrix divergences", failures.len());
+        panic!("{} {tag}-matrix divergences", failures.len());
     }
 }
