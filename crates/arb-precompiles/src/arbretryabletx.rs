@@ -385,14 +385,14 @@ fn handle_keepalive(
     let update_cost = nbytes.div_ceil(32) * (SSTORE_GAS / 100);
     let event_cost = LOG_GAS + 2 * LOG_TOPIC_GAS + LOG_DATA_GAS * 32;
 
-    // Init already covered the framework SLOAD; body adds the remaining
-    // 7 retryable SLOADs, 3 writes (timeout/ttl bumps), 2 result/COPY, the
-    // calldata-bytes "phantom" update_cost (a stylus-cache style warm cost
-    // — Read), the LifetimeExtended log, and the reap-price fee.
+    // Init already covered the framework SLOAD and argsCost; body adds the
+    // remaining 7 retryable SLOADs, 3 writes (timeout/ttl bumps), the single
+    // result word, the calldata-bytes "phantom" update_cost (a stylus-cache
+    // style warm cost — Read), the LifetimeExtended log, and the reap-price fee.
     crate::charge_storage_read(gas_used, ctx, 7 * SLOAD_GAS + update_cost);
     crate::charge_storage_write(gas_used, ctx, 3 * SSTORE_GAS);
     crate::charge_history_growth(gas_used, ctx, event_cost);
-    crate::charge_computation(gas_used, ctx, 2 * COPY_GAS + RETRYABLE_REAP_PRICE);
+    crate::charge_computation(gas_used, ctx, COPY_GAS + RETRYABLE_REAP_PRICE);
 
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
@@ -438,11 +438,9 @@ fn handle_cancel(
     ));
 
     let calldata_words = calldata_size.div_ceil(32);
-    let clear_bytes_cost = if calldata_size > 0 {
-        (calldata_words + 1) * SSTORE_ZERO_GAS
-    } else {
-        0
-    };
+    // The calldata clear always resets the length slot (one reset) plus one per
+    // content word, so the length-slot reset is charged even for empty calldata.
+    let clear_bytes_cost = (calldata_words + 1) * SSTORE_ZERO_GAS;
     let event_cost = LOG_GAS + 2 * LOG_TOPIC_GAS;
 
     // Init already covered the framework SLOAD; body adds 5 retryable
