@@ -1408,15 +1408,15 @@ fn handle_remove_chain_owner(
     {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
+    crate::charge_precompile_gas(gas_used, SLOAD_GAS);
     arb_state
         .chain_owners
-        .remove(internals, addr, arbos_version)
+        .remove(internals, addr, arbos_version, gas_used)
         .map_err(ArbPrecompileError::fatal)?;
     if arbos_version >= 60 {
         emit_address_event(input, IArbOwner::ChainOwnerRemoved::SIGNATURE_HASH, addr);
     }
 
-    crate::charge_precompile_gas(gas_used, 3 * SLOAD_GAS + 4 * SSTORE_GAS + COPY_GAS);
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
@@ -1640,12 +1640,12 @@ fn handle_remove_cache_manager(
     {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
+    crate::charge_precompile_gas(gas_used, SLOAD_GAS);
     arb_state
         .programs
         .cache_managers
-        .remove(internals, addr, arbos_version)
+        .remove(internals, addr, arbos_version, gas_used)
         .map_err(ArbPrecompileError::fatal)?;
-    crate::charge_precompile_gas(gas_used, 3 * SLOAD_GAS + 4 * SSTORE_GAS + COPY_GAS);
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
@@ -1794,14 +1794,14 @@ fn handle_remove_from_set(
     {
         return Err(ArbPrecompileError::empty_revert(*gas_used).into());
     }
-    set.remove(internals, addr, arbos_version)
+    crate::charge_precompile_gas(gas_used, SLOAD_GAS);
+    set.remove(internals, addr, arbos_version, gas_used)
         .map_err(ArbPrecompileError::fatal)?;
 
     if let Some(topic0) = event_topic {
         emit_address_event(input, topic0, addr);
     }
 
-    crate::charge_precompile_gas(gas_used, 3 * SLOAD_GAS + 4 * SSTORE_GAS + COPY_GAS);
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
