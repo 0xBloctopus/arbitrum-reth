@@ -393,6 +393,8 @@ fn program_memory_footprint_returns_packed_value() {
         ),
     );
     assert_eq!(decode_u256(run.output()), U256::from(7u64));
+    // open(800) + args(3) + codehash(2600) + params(100) + program(800) + result(3).
+    assert_eq!(run.gas_used(), 4306);
 }
 
 // ── More query coverage ──────────────────────────────────────────────
@@ -466,6 +468,8 @@ fn program_init_gas_returns_init_and_cached_costs() {
 
     assert_eq!(decode_word(out, 0), common::word_u64(init));
     assert_eq!(decode_word(out, 1), common::word_u64(cached));
+    // open(800) + args(3) + codehash(2600) + params(100) + program(800) + two-word result(6).
+    assert_eq!(run.gas_used(), 4309);
 }
 
 #[test]
@@ -513,6 +517,8 @@ fn program_time_left_returns_expiry_seconds_minus_age() {
     );
     let expected = 365u64 * 86_400 - 86_400;
     assert_eq!(decode_u256(run.output()), U256::from(expected));
+    // open(800) + args(3) + codehash(2600) + params(100) + program(800) + result(3).
+    assert_eq!(run.gas_used(), 4306);
 }
 
 #[test]
@@ -577,6 +583,8 @@ fn program_version_returns_program_version_for_fresh_program() {
         decode_u256(run.output()),
         U256::from(default_params().version)
     );
+    // open(800) + args(3) + codehash(2600) + params(100) + program(800) + result(3).
+    assert_eq!(run.gas_used(), 4306);
 }
 
 // ── codehashKeepalive value-source regression ─────────────────────────
