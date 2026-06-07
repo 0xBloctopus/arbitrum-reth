@@ -627,7 +627,7 @@ fn handle_rectify_chain_owner(
     crate::charge_storage_read(gas_used, ctx, 7 * SLOAD_GAS);
     crate::charge_storage_write(gas_used, ctx, SSTORE_ZERO_GAS + 3 * SSTORE_GAS);
     crate::charge_history_growth(gas_used, ctx, RECTIFY_EVENT_GAS);
-    crate::charge_computation(gas_used, ctx, COPY_GAS);
+    // No return value: result cost covers zero words.
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
