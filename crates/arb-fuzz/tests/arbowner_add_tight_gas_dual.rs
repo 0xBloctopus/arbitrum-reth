@@ -293,3 +293,160 @@ fn add_wasm_cache_manager_tight_gas_matches_nitro() {
         report.state_diffs,
     );
 }
+
+// Forwarded budget inside the window where the setter's StylusParams read being
+// a warm access (100) rather than a cold SLOAD (800) decides the outcome: the
+// reference node sets the param while a node charging the cold cost out-of-gases.
+fn setter_tight_gas() -> u16 {
+    std::env::var("ARB_SETTER_GAS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(21_000)
+}
+
+/// Runtime that `CALL`s 0x70 with `setInkPrice(0x1234)` forwarding exactly
+/// `gas`, then stores the call's success flag at slot 0.
+fn set_ink_price_runtime(gas: u16) -> Vec<u8> {
+    let sel = selector4("setInkPrice(uint32)");
+    let mut c = Vec::new();
+    c.push(0x63);
+    c.extend_from_slice(&sel);
+    c.extend_from_slice(&[0x60, 0xE0, 0x1b, 0x60, 0x00, 0x52]); // PUSH1 224 SHL PUSH1 0 MSTORE
+    c.extend_from_slice(&[0x61, 0x12, 0x34]); // PUSH2 0x1234 (the uint32 value)
+    c.extend_from_slice(&[0x60, 0x04, 0x52]); // PUSH1 4 MSTORE
+                                              // CALL operands (reverse): retLen retOff argLen argOff value addr gas
+    c.extend_from_slice(&[
+        0x60, 0x00, 0x60, 0x00, 0x60, 0x24, 0x60, 0x00, 0x60, 0x00, 0x60, 0x70,
+    ]);
+    c.push(0x61);
+    c.extend_from_slice(&gas.to_be_bytes()); // PUSH2 gas
+    c.extend_from_slice(&[0xf1, 0x60, 0x00, 0x55, 0x00]); // CALL PUSH1 0 SSTORE STOP
+    c
+}
+
+#[test]
+#[ignore]
+fn set_ink_price_tight_gas_matches_nitro() {
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let owner = derive_address(owner_key());
+    let caller = create_address(owner, 0);
+    let mut rig = Rig::spawn(owner);
+
+    let mut steps = Vec::new();
+    let mut idx = 0u64;
+    let mut next = || {
+        idx += 1;
+        idx
+    };
+
+    let i = next();
+    steps.push(msg_step(
+        i,
+        DepositBuilder {
+            from: FUNDER,
+            to: owner,
+            amount: U256::from(10u128).pow(U256::from(21u64)),
+            l1_block_number: 1,
+            timestamp: BASE_TS,
+            request_seq: i,
+            base_fee_l1: FUZZ_L1_BASE_FEE,
+        }
+        .build()
+        .expect("deposit"),
+        1,
+    ));
+
+    let i = next();
+    steps.push(msg_step(
+        i,
+        tx(
+            0,
+            None,
+            wrap_init(&set_ink_price_runtime(setter_tight_gas())),
+            3_000_000,
+            BASE_TS + i * BLOCK_SECS,
+        )
+        .build()
+        .expect("deploy caller"),
+        1,
+    ));
+
+    let i = next();
+    steps.push(msg_step(
+        i,
+        tx(
+            1,
+            Some(ARBOWNER),
+            add_chain_owner(caller),
+            3_000_000,
+            BASE_TS + i * BLOCK_SECS,
+        )
+        .build()
+        .expect("addChainOwner"),
+        1,
+    ));
+
+    let i = next();
+    steps.push(msg_step(
+        i,
+        tx(
+            2,
+            Some(caller),
+            Vec::new(),
+            3_000_000,
+            BASE_TS + i * BLOCK_SECS,
+        )
+        .build()
+        .expect("invoke caller"),
+        1,
+    ));
+
+    let i = next();
+    steps.push(msg_step(
+        i,
+        DepositBuilder {
+            from: FUNDER,
+            to: FUNDER,
+            amount: U256::from(1u64),
+            l1_block_number: 1 + (BASE_TS + i * BLOCK_SECS - BASE_TS) / BLOCK_SECS,
+            timestamp: BASE_TS + i * BLOCK_SECS,
+            request_seq: i,
+            base_fee_l1: FUZZ_L1_BASE_FEE,
+        }
+        .build()
+        .expect("trailing deposit"),
+        2,
+    ));
+
+    let scenario = Scenario {
+        name: "set_ink_price_tight_gas".into(),
+        description: "owner setter at a budget between arbreth and nitro body cost".into(),
+        setup: ScenarioSetup {
+            l2_chain_id: L2_CHAIN_ID,
+            arbos_version: ARBOS_VERSION,
+            genesis: None,
+        },
+        steps,
+    };
+
+    let checks = [StateCheck {
+        address: caller,
+        slots: vec![B256::ZERO],
+        check_balance: false,
+        check_nonce: false,
+        check_code: false,
+    }];
+
+    let report = rig
+        .dual
+        .run_with_state_checks(&scenario, &checks)
+        .expect("dual run");
+
+    assert!(
+        report.is_clean(),
+        "arbreth diverged from Nitro on the tight-gas setter\n  block_diffs={:#?}\n  tx_diffs={:#?}\n  state_diffs={:#?}",
+        report.block_diffs,
+        report.tx_diffs,
+        report.state_diffs,
+    );
+}

@@ -36,6 +36,9 @@ const SLOAD_GAS: u64 = 800;
 const SSTORE_GAS: u64 = 20_000;
 const SSTORE_ZERO_GAS: u64 = 5_000;
 const COPY_GAS: u64 = 3;
+/// The packed StylusParams word is read as a single warm access, not a cold
+/// SLOAD, matching the backing store's warm-cached treatment of that slot.
+const WARM_SLOAD_GAS: u64 = 100;
 
 pub fn create_arbowner_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
     DynPrecompile::new_stateful(PrecompileId::custom("arbowner"), move |input| {
@@ -1514,7 +1517,7 @@ fn write_stylus_param(
         .programs
         .save_params(internals, &params)
         .map_err(ArbPrecompileError::fatal)?;
-    crate::charge_precompile_gas(gas_used, SLOAD_GAS + SSTORE_GAS);
+    crate::charge_precompile_gas(gas_used, WARM_SLOAD_GAS + SSTORE_GAS);
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
         Vec::new().into(),
