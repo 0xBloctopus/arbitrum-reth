@@ -746,6 +746,9 @@ fn handle_set_network_fee_account(
     arb_state
         .set_network_fee_account(internals, addr)
         .map_err(ArbPrecompileError::fatal)?;
+    ctx.block
+        .fee_collectors_dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, SSTORE_GAS);
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
@@ -773,6 +776,9 @@ fn handle_set_infra_fee_account(
     arb_state
         .set_infra_fee_account(internals, addr)
         .map_err(ArbPrecompileError::fatal)?;
+    ctx.block
+        .fee_collectors_dirty
+        .store(true, std::sync::atomic::Ordering::Relaxed);
     crate::charge_precompile_gas(gas_used, SSTORE_GAS);
     Ok(PrecompileOutput::new(
         (*gas_used).min(gas_limit),
