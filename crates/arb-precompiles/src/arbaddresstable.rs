@@ -2,7 +2,7 @@ use alloy_evm::precompiles::{DynPrecompile, PrecompileInput};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
 use arb_context::ArbPrecompileCtx;
-use arb_storage::ARBOS_STATE_ADDRESS;
+use arb_storage::{write_cost, ARBOS_STATE_ADDRESS, STORAGE_READ_GAS, STORAGE_WRITE_GAS};
 use arbos::address_table::AddressTableError;
 use revm::precompile::{PrecompileId, PrecompileOutput, PrecompileResult};
 use std::sync::Arc;
@@ -15,9 +15,8 @@ pub const ARBADDRESSTABLE_ADDRESS: Address = Address::new([
     0x00, 0x00, 0x00, 0x66,
 ]);
 
-const SLOAD_GAS: u64 = 800;
-const SSTORE_GAS: u64 = 20_000;
-const SSTORE_ZERO_GAS: u64 = 5_000;
+const SLOAD_GAS: u64 = STORAGE_READ_GAS;
+const SSTORE_GAS: u64 = STORAGE_WRITE_GAS;
 const COPY_GAS: u64 = 3;
 
 pub fn create_arbaddresstable_precompile(ctx: Arc<ArbPrecompileCtx>) -> DynPrecompile {
@@ -225,15 +224,8 @@ fn handle_register(
         ));
     }
 
-    // The index→address slot stores the address, so a zero address is a
-    // zero-value write, charged the reset price.
-    let index_write = if addr.is_zero() {
-        SSTORE_ZERO_GAS
-    } else {
-        SSTORE_GAS
-    };
     crate::charge_storage_read(gas_used, ctx, 2 * SLOAD_GAS);
-    crate::charge_storage_write(gas_used, ctx, 2 * SSTORE_GAS + index_write);
+    crate::charge_storage_write(gas_used, ctx, 2 * SSTORE_GAS + write_cost(addr.is_zero()));
     crate::charge_computation(gas_used, ctx, COPY_GAS);
 
     Ok(PrecompileOutput::new(
